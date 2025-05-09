@@ -1,0 +1,298 @@
+const Category = require('../models/category.model');
+const Content = require('../models/content.model');
+const AppError = require('../utils/appError');
+const catchAsync = require('../utils/catchAsync');
+
+// Get all categories (public)
+exports.getAllCategories = catchAsync(async (req, res, next) => {
+  const filter = { active: true };
+  
+  const categories = await Category.find(filter)
+    .sort('priority name')
+    .select('name description icon color slug contentCount');
+  
+  res.status(200).json({
+    status: 'success',
+    results: categories.length,
+    data: {
+      categories,
+    },
+  });
+});
+
+// Get single category by slug or ID
+exports.getCategory = catchAsync(async (req, res, next) => {
+  const { slug } = req.params;
+  
+  // Check if parameter is ObjectId or slug
+  const isObjectId = slug.match(/^[0-9a-fA-F]{24}$/);
+  
+  // Build query based on parameter type
+  const query = isObjectId ? { _id: slug } : { slug };
+  
+  const category = await Category.findOne(query);
+  
+  if (!category) {
+    return next(new AppError('Category not found', 404));
+  }
+  
+  res.status(200).json({
+    status: 'success',
+    data: {
+      category,
+    },
+  });
+});
+
+// Create category (admin only)
+exports.createCategory = catchAsync(async (req, res, next) => {
+  try {
+    // Prepare the category data with fallback for createdBy
+    const createdBy = req.user?.id || process.env.ADMIN_USER_ID;
+    
+    // Check if we have a valid creator ID
+    if (!createdBy) {
+      return next(new AppError('No valid user ID available for category creation', 500));
+    }
+    
+    // Prepare data for category creation
+    const categoryData = {
+      name: req.body.name,
+      description: req.body.description || `Category for ${req.body.name}`,
+      icon: req.body.icon || 'default',
+      color: req.body.color || '#3498db',
+      slug: req.body.slug || req.body.name.toLowerCase().replace(/[^\w\s]/gi, '').replace(/\s+/g, '-'),
+      priority: req.body.priority || 0,
+      active: req.body.active !== undefined ? req.body.active : true,
+      prompt: req.body.prompt || null,
+      singlePrompt: req.body.singlePrompt || null,
+      multiplePrompt: req.body.multiplePrompt || null,
+      promptType: req.body.promptType || 'single',
+      defaultNumToGenerate: req.body.defaultNumToGenerate || 1,
+      contentType: req.body.contentType || 'hack',
+      createdBy: createdBy
+    };
+    
+    const newCategory = await Category.create(categoryData);
+    
+    res.status(201).json({
+      status: 'success',
+      data: {
+        category: newCategory,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating category:', error);
+    
+    // Handle duplicate key error (most commonly the name or slug)
+    if (error.code === 11000) {
+      return next(new AppError('A category with this name or slug already exists', 400));
+    }
+    
+    return next(new AppError(`Error creating category: ${error.message}`, 500));
+  }
+});
+
+// Update category (admin only)
+exports.updateCategory = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  
+  // Include all updatable fields
+  const updateData = {
+    name: req.body.name,
+    description: req.body.description,
+    icon: req.body.icon,
+    color: req.body.color,
+    priority: req.body.priority,
+    active: req.body.active,
+    prompt: req.body.prompt,
+    singlePrompt: req.body.singlePrompt,
+    multiplePrompt: req.body.multiplePrompt,
+    promptType: req.body.promptType,
+    defaultNumToGenerate: req.body.defaultNumToGenerate,
+    contentType: req.body.contentType
+  };
+  
+  // Remove undefined fields
+  Object.keys(updateData).forEach(key => {
+    if (updateData[key] === undefined) {
+      delete updateData[key];
+    }
+  });
+  
+  const updatedCategory = await Category.findByIdAndUpdate(
+    id,
+    updateData,
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+  
+  if (!updatedCategory) {
+    return next(new AppError('Category not found', 404));
+  }
+  
+  res.status(200).json({
+    status: 'success',
+    data: {
+      category: updatedCategory,
+    },
+  });
+});
+
+// Delete category (admin only)
+exports.deleteCategory = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  
+  // Check if category has content
+  const contentCount = await Content.countDocuments({ category: id });
+  
+  if (contentCount > 0) {
+    return next(
+      new AppError(
+        `Cannot delete category with ${contentCount} content items. Deactivate it instead.`,
+        400
+      )
+    );
+  }
+  
+  const category = await Category.findByIdAndDelete(id);
+  
+  if (!category) {
+    return next(new AppError('Category not found', 404));
+  }
+  
+  res.status(204).json({
+    status: 'success',
+    data: null,
+  });
+});
+
+// Get category statistics
+exports.getCategoryStats = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  
+  const category = await Category.findById(id);
+  
+  if (!category) {
+    return next(new AppError('Category not found', 404));
+  }
+  
+  // Get content statistics for this category
+  const stats = await Content.aggregate([
+    {
+      $match: { category: category._id, status: 'published' },
+    },
+    {
+      $group: {
+        _id: null,
+        totalContent: { $sum: 1 },
+        totalViews: { $sum: '$stats.views' },
+        totalLikes: { $sum: '$stats.likes' },
+        totalDislikes: { $sum: '$stats.dislikes' },
+        totalShares: { $sum: '$stats.shares' },
+        totalSaves: { $sum: '$stats.saves' },
+        avgRating: {
+          $avg: {
+            $cond: [
+              { $eq: [{ $add: ['$stats.likes', '$stats.dislikes'] }, 0] },
+              0,
+              { $divide: ['$stats.likes', { $add: ['$stats.likes', '$stats.dislikes'] }] },
+            ],
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        totalContent: 1,
+        totalViews: 1,
+        totalLikes: 1,
+        totalDislikes: 1,
+        totalShares: 1,
+        totalSaves: 1,
+        avgRating: { $multiply: ['$avgRating', 5] }, // Convert to 0-5 rating scale
+      },
+    },
+  ]);
+  
+  // Get latest content
+  const latestContent = await Content.find({ category: category._id, status: 'published' })
+    .sort('-publishDate')
+    .limit(5)
+    .select('title summary publishDate stats');
+  
+  res.status(200).json({
+    status: 'success',
+    data: {
+      category,
+      stats: stats[0] || {
+        totalContent: 0,
+        totalViews: 0,
+        totalLikes: 0,
+        totalDislikes: 0,
+        totalShares: 0,
+        totalSaves: 0,
+        avgRating: 0,
+      },
+      latestContent,
+    },
+  });
+});
+
+// Add this function to get categories with content pool statistics
+exports.getCategoriesWithPoolStats = async (req, res, next) => {
+  try {
+    const promptService = require('../services/prompt.service');
+    const Category = require('../models/category.model');
+    
+    // Get all categories first
+    const categories = await Category.find({});
+    
+    // Calculate pool statistics for each category
+    const enrichedCategories = await promptService.calculateCategoryPools(categories);
+    
+    res.status(200).json({
+      status: 'success',
+      results: enrichedCategories.length,
+      data: {
+        categories: enrichedCategories
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching categories with pool stats:', err);
+    next(err);
+  }
+};
+
+// Add a new function to activate all categories
+exports.activateAllCategories = async (req, res, next) => {
+  try {
+    // Find all inactive categories
+    const inactiveCategories = await Category.find({ active: false });
+    
+    if (inactiveCategories.length === 0) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'No inactive categories found',
+        data: { activatedCount: 0 }
+      });
+    }
+    
+    // Update all inactive categories to active
+    const result = await Category.updateMany(
+      { active: false },
+      { $set: { active: true } }
+    );
+    
+    return res.status(200).json({
+      status: 'success',
+      message: `Activated ${result.modifiedCount} categories`,
+      data: { activatedCount: result.modifiedCount }
+    });
+  } catch (error) {
+    return next(new AppError(`Error activating categories: ${error.message}`, 500));
+  }
+}; 
