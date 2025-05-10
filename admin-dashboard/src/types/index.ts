@@ -114,6 +114,13 @@ export interface Content {
     likes: number;
     dislikes: number;
   };
+  stats?: {
+    views: number;
+    likes: number;
+    dislikes: number;
+    shares: number;
+    saves: number;
+  };
   createdAt: string;
   updatedAt: string;
   pool: 'regular' | 'accepted' | 'highly_liked' | 'disliked' | 'premium';

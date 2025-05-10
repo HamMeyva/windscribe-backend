@@ -12,6 +12,8 @@ router.use(authController.restrictTo('admin', 'moderator'));
 router.get('/content/pending', adminController.getPendingContent);
 router.patch('/content/:id/moderate', adminController.moderateContent);
 router.patch('/content/:id/schedule', adminController.scheduleContent);
+router.delete('/content/:id', adminController.deleteContent);
+router.post('/content', adminController.createContent);
 
 // Content generation routes
 router.post('/content/generate', 

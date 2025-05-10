@@ -63,9 +63,8 @@ const Categories = () => {
     color: '#3f51b5',
     prompt: '',
     singlePrompt: '',
-    multiplePrompt: '',
     promptType: 'single',
-    defaultNumToGenerate: 1,
+    defaultNumToGenerate: 5,
     priority: 0,
     active: true,
     contentType: 'hack'
@@ -142,9 +141,8 @@ const Categories = () => {
         active: category.active,
         prompt: category.prompt || '',
         singlePrompt: category.singlePrompt || '',
-        multiplePrompt: category.multiplePrompt || '',
-        promptType: category.promptType || 'single',
-        defaultNumToGenerate: category.defaultNumToGenerate || 1,
+        promptType: 'single',
+        defaultNumToGenerate: category.defaultNumToGenerate || 5,
         contentType: category.contentType || 'hack'
       });
     } else {
@@ -159,9 +157,8 @@ const Categories = () => {
         active: true,
         prompt: '',
         singlePrompt: '',
-        multiplePrompt: '',
         promptType: 'single',
-        defaultNumToGenerate: 1,
+        defaultNumToGenerate: 5,
         contentType: 'hack'
       });
     }
@@ -448,13 +445,9 @@ const Categories = () => {
   };
   
   useEffect(() => {
-    // Keep the legacy 'prompt' field in sync with the active prompt type
-    if (formData.promptType === 'single') {
-      setFormData(prev => ({ ...prev, prompt: prev.singlePrompt }));
-    } else if (formData.promptType === 'multiple') {
-      setFormData(prev => ({ ...prev, prompt: prev.multiplePrompt }));
-    }
-  }, [formData.promptType, formData.singlePrompt, formData.multiplePrompt]);
+    // Keep the legacy 'prompt' field in sync with the single prompt
+    setFormData(prev => ({ ...prev, prompt: prev.singlePrompt }));
+  }, [formData.singlePrompt]);
   
   if (loading && categories.length === 0) {
     return (
@@ -812,35 +805,24 @@ const Categories = () => {
                 </Typography>
               </FormControl>
               
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Default Prompt Type</InputLabel>
-                <Select
-                  name="promptType"
-                  value={formData.promptType || 'single'}
-                  onChange={handleInputChange}
-                  label="Default Prompt Type"
-                >
-                  <MenuItem value="single">Single (generate one item at a time)</MenuItem>
-                  <MenuItem value="multiple">Multiple (generate multiple items at once)</MenuItem>
-                </Select>
-              </FormControl>
-              
               <TextField
-                label="Default Num to Generate"
+                label="Default Number to Generate"
                 name="defaultNumToGenerate"
                 type="number"
-                value={formData.defaultNumToGenerate}
+                value={formData.defaultNumToGenerate || 5}
                 onChange={handleInputChange}
+                fullWidth
                 margin="normal"
                 InputProps={{ inputProps: { min: 1, max: 20 } }}
+                helperText="How many items to generate by default"
               />
             </Box>
             
             <Typography variant="subtitle2" mt={3} mb={1}>
-              Single Item Prompt
+              Prompt Template
             </Typography>
             <TextField
-              label="Single Item Generation Prompt"
+              label="Generation Prompt"
               name="singlePrompt"
               value={formData.singlePrompt}
               onChange={handleInputChange}
@@ -848,27 +830,8 @@ const Categories = () => {
               margin="normal"
               multiline
               rows={6}
-              helperText="Define how to generate a single content item (include output format instructions)"
+              helperText="This prompt will be used to generate content. Use the variable {numToGenerate} to specify how many items to create."
             />
-            
-            <Typography variant="subtitle2" mt={3} mb={1}>
-              Multiple Items Prompt
-            </Typography>
-            <TextField
-              label="Multiple Items Generation Prompt"
-              name="multiplePrompt"
-              value={formData.multiplePrompt}
-              onChange={handleInputChange}
-              fullWidth
-              margin="normal"
-              multiline
-              rows={6}
-              helperText={`Define how to generate multiple items at once (include output format instructions)`}
-            />
-            
-            <Typography variant="subtitle2" color="text.secondary" mt={1} fontSize="0.8rem">
-              Note: For backward compatibility, the selected prompt type will be stored in both the legacy "prompt" field and the new specific field.
-            </Typography>
           </Box>
         </DialogContent>
         <DialogActions>

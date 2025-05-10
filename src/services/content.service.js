@@ -28,6 +28,31 @@ const mockContentGenerator = (category, topic, difficulty) => {
   };
 };
 
+// Find the validateGeneratedContent function or add it if it doesn't exist
+const validateGeneratedContent = (content) => {
+  if (Array.isArray(content)) {
+    // Validate an array of content items
+    if (content.length === 0) {
+      throw new Error('Generated content array is empty');
+    }
+    
+    content.forEach((item, index) => {
+      if (!item.title || !item.body) {
+        throw new Error(`Generated content item ${index + 1} is missing required fields`);
+      }
+    });
+    
+    return content;
+  } else {
+    // Validate a single content item
+    if (!content.title || !content.body) {
+      throw new Error('Generated content is missing required fields');
+    }
+    
+    return content;
+  }
+};
+
 /**
  * Generate content using OpenAI API
  * @param {Object} category - Category document
@@ -184,17 +209,8 @@ ENSURE THERE ARE NO CONTROL CHARACTERS OR INVALID ESCAPE SEQUENCES IN YOUR JSON.
       }
     }
     
-    // Validate required fields
-    if (!content.title || !content.body || !content.summary) {
-      throw new AppError('Generated content is missing required fields', 500);
-    }
-    
-    return {
-      title: content.title,
-      body: content.body,
-      summary: content.summary,
-      tags: content.tags || [],
-    };
+    // Validate the parsed content - could be single object or array of objects
+    return validateGeneratedContent(content);
   } catch (error) {
     console.error('OpenAI API error:', error);
     
@@ -360,11 +376,11 @@ exports.generateMultipleContent = async (category, user, contentType, count = 10
   const effectiveContentType = contentType || fullCategory.contentType || 'hack';
   console.log(`Content generation using effective content type: ${effectiveContentType}`);
   
-  // Get the appropriate prompt strategy for this category
+  // Get the appropriate prompt strategy for this category with the number of items to generate
   let promptStrategy;
   try {
     promptStrategy = await promptService.generatePromptForContent(fullCategory, count, effectiveContentType);
-    console.log(`Using content type: ${effectiveContentType}, prompt strategy: ${promptStrategy.isSingle ? 'single' : 'multiple'}`);
+    console.log(`Using content type: ${effectiveContentType}, generating ${promptStrategy.count} items`);
   } catch (error) {
     console.error(`Error getting prompt strategy: ${error.message}`);
     promptStrategy = {
@@ -375,61 +391,42 @@ exports.generateMultipleContent = async (category, user, contentType, count = 10
     };
   }
   
-  if (promptStrategy.isSingle) {
-    // Generate content one by one using single prompts
-    for (let i = 0; i < promptStrategy.count; i++) {
-      try {
-        // Generate content using AI
-        const content = await exports.generateWithAI(
-          fullCategory,
-          null, // No specific topic for batch generation
-          difficulty,
-          promptStrategy.promptText, // Use the category-specific prompt
-          model // Use the specified model
-        );
-        
-        // Create content in database
-        const newContent = await Content.create({
-          title: content.title,
-          body: content.body,
-          summary: content.summary,
-          category: fullCategory._id,
-          status: 'draft',
-          contentType: promptStrategy.contentType, // Use the determined content type
-          source: 'ai',
-          authorId: user._id,
-          tags: content.tags,
-          difficulty: difficulty,
-        });
-        
-        generatedContent.push(newContent);
-      } catch (error) {
-        console.error(`Error generating content ${i+1}/${promptStrategy.count}:`, error);
-        // Continue generating remaining content
+  try {
+    // Generate content using AI
+    const content = await exports.generateWithAI(
+      fullCategory,
+      null, // No specific topic for batch generation
+      difficulty,
+      promptStrategy.promptText, // Use the category-specific prompt with numToGenerate variable
+      model // Use the specified model
+    );
+    
+    // Check if the response is an array (multiple items) or a single object
+    if (Array.isArray(content)) {
+      console.log(`Received ${content.length} content items from AI response`);
+      
+      // Process each item in the array
+      for (const item of content) {
+        if (item.title && item.body) {
+          // Create content in database
+          const newContent = await Content.create({
+            title: item.title,
+            body: item.body,
+            summary: item.summary || item.title,
+            category: fullCategory._id,
+            status: 'draft',
+            contentType: promptStrategy.contentType,
+            source: 'ai',
+            authorId: user._id,
+            tags: item.tags || [],
+            difficulty: difficulty,
+          });
+          
+          generatedContent.push(newContent);
+        }
       }
-    }
-  } else {
-    // Generate multiple items at once if we have a multiple prompt
-    try {
-      // Generate multiple content items in a single API call
-      // First override category's promptType to ensure we use the multiple prompt
-      const tempCategory = { 
-        ...fullCategory.toObject(), 
-        promptType: 'multiple' 
-      };
-      
-      console.log(`Generating batch content with multiple prompt for ${fullCategory.name}`);
-      
-      const content = await exports.generateWithAI(
-        tempCategory,
-        null,
-        difficulty,
-        promptStrategy.promptText,
-        model // Use the specified model
-      );
-      
-      // Parse the content into multiple items if needed
-      // For now, we'll assume the API returns a single item and we'd need to create multiple
+    } else {
+      // Handle as a single item (old behavior)
       const newContent = await Content.create({
         title: content.title,
         body: content.body,
@@ -444,47 +441,10 @@ exports.generateMultipleContent = async (category, user, contentType, count = 10
       });
       
       generatedContent.push(newContent);
-    } catch (error) {
-      console.error(`Error generating multiple content:`, error);
-      
-      // Fallback to generating one by one if the batch generate fails
-      console.log('Falling back to single content generation');
-      
-      for (let i = 0; i < promptStrategy.count; i++) {
-        try {
-          // Force use of single prompt
-          const tempCategory = { 
-            ...fullCategory.toObject(), 
-            promptType: 'single' 
-          };
-          
-          const content = await exports.generateWithAI(
-            tempCategory,
-            null,
-            difficulty,
-            fullCategory.singlePrompt || promptStrategy.promptText,
-            model // Use the specified model
-          );
-          
-          const newContent = await Content.create({
-            title: content.title,
-            body: content.body,
-            summary: content.summary,
-            category: fullCategory._id,
-            status: 'draft',
-            contentType: promptStrategy.contentType,
-            source: 'ai',
-            authorId: user._id,
-            tags: content.tags,
-            difficulty: difficulty,
-          });
-          
-          generatedContent.push(newContent);
-        } catch (innerError) {
-          console.error(`Error in fallback generation ${i+1}/${promptStrategy.count}:`, innerError);
-        }
-      }
     }
+  } catch (error) {
+    console.error(`Error generating content: ${error.message}`);
+    throw new AppError(`Failed to generate content: ${error.message}`, 500);
   }
   
   if (generatedContent.length === 0) {

@@ -516,4 +516,44 @@ exports.seedPromptsFromFile = catchAsync(async (req, res, next) => {
   });
 });
 
+// Create content
+exports.createContent = catchAsync(async (req, res, next) => {
+  // Get content data from request body
+  const contentData = { ...req.body };
+  
+  // Add user reference if not provided
+  if (!contentData.authorId) {
+    contentData.authorId = req.user._id;
+  }
+  
+  // Create new content
+  const newContent = await Content.create(contentData);
+  
+  // If creation is successful, return the new content
+  res.status(201).json({
+    status: 'success',
+    data: {
+      content: newContent
+    }
+  });
+});
+
+// Delete content
+exports.deleteContent = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  
+  const content = await Content.findById(id);
+  
+  if (!content) {
+    return next(new AppError('Content not found', 404));
+  }
+  
+  await Content.findByIdAndDelete(id);
+  
+  res.status(200).json({
+    status: 'success',
+    message: 'Content deleted successfully'
+  });
+});
+
 module.exports = { ...exports }; // Ensure all exports are correctly bundled if not already structured this way 

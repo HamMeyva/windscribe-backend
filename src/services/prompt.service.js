@@ -268,39 +268,42 @@ exports.generatePromptForContent = async (category, count = 1, contentType = 'ha
     console.log(`No content type specified, using default: ${effectiveContentType}`);
   }
 
-  // Determine which prompt to use based on promptType and count
+  // Always use single prompt and replace {numToGenerate} variable with the count
   let promptText = null;
-  let isSingle = true;
+  const numToGenerate = count || category.defaultNumToGenerate || 1;
 
-  // If we have multiple items to generate and a multiple prompt exists, use it
-  if (count > 1 && category.multiplePrompt) {
-    promptText = category.multiplePrompt;
-    isSingle = false;
-    console.log('Using multiple prompt from category');
-  } 
-  // If we have a single item or no multiple prompt, use single prompt if it exists
-  else if (category.singlePrompt) {
+  // Use the category's singlePrompt if available
+  if (category.singlePrompt) {
     promptText = category.singlePrompt;
-    isSingle = true;
     console.log('Using single prompt from category');
-  }
+  } 
   // Fall back to legacy prompt field if type-specific prompts don't exist
   else if (category.prompt) {
     promptText = category.prompt;
-    isSingle = category.promptType === 'single';
-    console.log(`Using legacy prompt from category with type: ${category.promptType}`);
+    console.log('Using legacy prompt from category');
   }
   // If no prompts are available, generate a fallback
   else {
     promptText = getFallbackPromptForContentType(category, effectiveContentType);
-    isSingle = true;
     console.log('No prompts found in category, using generated fallback prompt');
+  }
+
+  // Replace the numToGenerate variable in the prompt if it exists
+  if (promptText && promptText.includes('{numToGenerate}')) {
+    promptText = promptText.replace(/\{numToGenerate\}/g, numToGenerate);
+    console.log(`Replaced {numToGenerate} with ${numToGenerate} in prompt`);
+  } else {
+    // If the variable isn't in the prompt, append instructions for generating multiple items
+    if (numToGenerate > 1) {
+      promptText += `\n\nIMPORTANT: Generate ${numToGenerate} different items, each with its own unique title, body, and summary. Format the response as a JSON array with ${numToGenerate} objects.`;
+      console.log(`Added instructions to generate ${numToGenerate} items to prompt`);
+    }
   }
 
   return {
     promptText,
-    isSingle,
-    count: count,
+    isSingle: true, // Always use single mode now
+    count: numToGenerate,
     contentType: effectiveContentType
   };
 };

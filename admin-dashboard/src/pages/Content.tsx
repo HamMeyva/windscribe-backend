@@ -106,10 +106,10 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   
   // State for tabs & filters
   const [tabValue, setTabValue] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [difficultyFilter, setDifficultyFilter] = useState<string>('all');
-  const [contentTypeFilter, setContentTypeFilter] = useState<string>('all');
+  const [contentTypeFilter, setContentTypeFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [poolFilter, setPoolFilter] = useState<string>('all');
   
@@ -167,19 +167,9 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   // State for pagination
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  
-  // State for action menu
-  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
-  const [activeContentId, setActiveContentId] = useState<string | null>(null);
-  
-  // State for snackbar
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: '',
-    severity: 'success' as 'success' | 'error' | 'info' | 'warning'
-  });
-
-  // Add state for tracking generation progress
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
   const [generationProgress, setGenerationProgress] = useState<{
     total: number;
     completed: number;
@@ -200,6 +190,17 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     currentItemInCategory: 0,
     totalItemsInCategory: 0,
     results: []
+  });
+  
+  // State for action menu
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [activeContentId, setActiveContentId] = useState<string | null>(null);
+  
+  // State for snackbar
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success' as 'success' | 'error' | 'info' | 'warning'
   });
 
   // State for duplicate management
@@ -329,78 +330,98 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   // Handle tab change
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
+    
+    // Reset filters when changing tabs
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setContentTypeFilter('all');
+    setDifficultyFilter('all');
+    setPoolFilter('all');
+    setSearchTerm('');
+    setPage(0);
+    
+    // Fetch data based on tab
+    setTimeout(() => {
+      let status: string | undefined;
+      
+      // Determine which status to filter by based on tab
+      switch (newValue) {
+        case 1: // Published
+          status = 'published';
+          break;
+        case 2: // Pending
+          status = 'pending';
+          break;
+        case 3: // Drafts
+          status = 'draft';
+          break;
+        case 4: // Rejected
+          status = 'rejected';
+          break;
+        default:
+          status = undefined;
+      }
+      
+      // Set status filter and fetch data
+      setStatusFilter(status || 'all');
+      handleRefresh();
+      
+      // If switching to Pools tab, fetch pool content
+      if (newValue === 5) {
+        fetchPoolContent('all');
+      }
+    }, 0);
   };
 
-  // Handle filters
-  const handleStatusFilterChange = (event: any) => {
-    setStatusFilter(event.target.value);
+  // Handle status filter change
+  const handleStatusFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+    const value = event.target.value as string;
+    setStatusFilter(value);
+    setPage(0); // Reset to first page
+    setTimeout(() => handleRefresh(), 0);
   };
 
-  const handleCategoryFilterChange = (event: any) => {
-    setCategoryFilter(event.target.value);
+  // Handle category filter change
+  const handleCategoryFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+    const value = event.target.value as string;
+    setCategoryFilter(value);
+    setPage(0); // Reset to first page
+    setTimeout(() => handleRefresh(), 0);
+  };
+
+  // Handle content type filter change
+  const handleContentTypeFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+    const value = event.target.value as string;
+    setContentTypeFilter(value);
+    setPage(0); // Reset to first page
+    setTimeout(() => handleRefresh(), 0);
   };
 
   const handleDifficultyFilterChange = (event: any) => {
     setDifficultyFilter(event.target.value);
   };
 
-  const handleContentTypeFilterChange = (event: any) => {
-    setContentTypeFilter(event.target.value);
-  };
-
   const handlePoolFilterChange = (event: any) => {
     setPoolFilter(event.target.value);
   };
 
-  // Filter content based on tab, filters, and search
+  // Get filtered content - now applies only to items on current page
   const getFilteredContent = () => {
+    // Since we're now filtering server-side via API calls, this function
+    // only needs to apply local filtering for things not handled by the API
     return content.filter((item) => {
-      // Filter by tab (status groups)
-      if (tabValue === 0) { // All
-        // No filtering
-      } else if (tabValue === 1 && item.status !== 'published') { // Unpublished
-        return false;
-      } else if (tabValue === 2 && item.status !== 'pending') { // Pending
-        return false;
-      } else if (tabValue === 3 && item.status !== 'draft') { // Drafts
-        return false;
-      } else if (tabValue === 4 && item.status !== 'rejected') { // Rejected
+      // Filter by search term locally (server doesn't support this yet)
+      if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) {
         return false;
       }
       
-      // Filter by status
-      if (statusFilter !== 'all' && item.status !== statusFilter) {
-        return false;
-      }
-      
-      // Filter by category
-      if (categoryFilter !== 'all') {
-        const categoryId = typeof item.category === 'string' 
-          ? item.category 
-          : item.category?._id;
-          
-        if (categoryId !== categoryFilter) {
-          return false;
-        }
-      }
-      
-      // Filter by difficulty
+      // Filter by difficulty locally
       if (difficultyFilter !== 'all' && item.difficulty !== difficultyFilter) {
         return false;
       }
       
-      // Filter by content type
-      if (contentTypeFilter !== 'all' && item.contentType !== contentTypeFilter) {
-        return false;
-      }
-      
-      // Filter by pool
+      // Filter by pool locally
       if (poolFilter !== 'all' && item.pool !== poolFilter) {
-        return false;
-      }
-      
-      // Filter by search term
-      if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) {
         return false;
       }
       
@@ -414,21 +435,65 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   const handleRefresh = async () => {
     try {
       setLoading(true);
-      const response = await contentAPI.getAllContent();
+      setError(null);
       
-      if (response.data?.content) {
+      // Make API request with pagination parameters
+      const response = await contentAPI.getAllContent(
+        page + 1, // API uses 1-indexed pages
+        rowsPerPage, 
+        statusFilter !== 'all' ? statusFilter : undefined, 
+        contentTypeFilter !== 'all' ? contentTypeFilter : undefined
+      );
+      
+      if (response?.data?.content) {
         setContent(response.data.content);
+        
+        // Set pagination values from API response
+        if (response.data.pagination) {
+          setTotalCount(response.data.pagination.total || 0);
+          setTotalPages(response.data.pagination.pages || 1);
+        } else {
+          // If no pagination info, estimate based on content length
+          setTotalCount(response.data.content.length);
+          setTotalPages(1);
+        }
+      } else {
+        // Handle empty response
+        setContent([]);
+        setTotalCount(0);
+        setTotalPages(1);
       }
-    } catch (err) {
-      console.error('Error refreshing content:', err);
+    } catch (error: any) {
+      console.error('Error refreshing content:', error);
+      setError(`Failed to refresh content: ${error?.message || 'Unknown error'}`);
       setSnackbar({
         open: true,
-        message: 'Failed to refresh content. Please try again.',
+        message: `Failed to refresh content: ${error?.message || 'Please try again'}`,
         severity: 'error'
       });
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle page change
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setPage(newPage);
+    // Call API with updated page
+    setTimeout(() => {
+      handleRefresh();
+    }, 0);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const newRowsPerPage = parseInt(event.target.value, 10);
+    setRowsPerPage(newRowsPerPage);
+    setPage(0);
+    // Call API with new limit
+    setTimeout(() => {
+      handleRefresh();
+    }, 0);
   };
 
   // Dialog handlers
@@ -495,15 +560,33 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   // Content submission
   const handleSubmitContent = async () => {
     try {
+      if (!formData.category) {
+        setSnackbar({
+          open: true,
+          message: 'Please select a category',
+          severity: 'error'
+        });
+        return;
+      }
+      
       if (dialogMode === 'add') {
         const response = await contentAPI.createContent(formData);
         
-        if (response.data?.content) {
-          setContent([...content, response.data.content]);
+        if (response.success || response.status === 'success') {
+          if (response.data?.content) {
+            setContent([response.data.content, ...content]);
+            setSnackbar({
+              open: true,
+              message: 'Content created successfully!',
+              severity: 'success'
+            });
+            handleCloseContentDialog();
+          }
+        } else {
           setSnackbar({
             open: true,
-            message: 'Content created successfully!',
-            severity: 'success'
+            message: response.message || 'Failed to create content. Please try again.',
+            severity: 'error'
           });
         }
       } else if (dialogMode === 'edit' && selectedContent?._id) {
@@ -523,10 +606,9 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
             message: 'Content updated successfully!',
             severity: 'success'
           });
+          handleCloseContentDialog();
         }
       }
-      
-      handleCloseContentDialog();
     } catch (err) {
       console.error('Error saving content:', err);
       setSnackbar({
@@ -695,7 +777,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       setGeneratingContent(true);
       setError(null);
       
-      // Set the flag that generation is in progress (for refresh handling)
+      // Set the flag that generation is in progress
       localStorage.setItem('windspire-generation-in-progress', 'true');
       
       let categoryIdsParam: string[];
@@ -725,10 +807,19 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         categoryIdsParam = [generationCategory];
       }
 
-      // Calculate total expected items
-      const totalItems = categoryIdsParam.length * generationCount;
+      // Clear existing filters to ensure new content is visible
+      setStatusFilter('all');
+      setCategoryFilter('all');
+      setContentTypeFilter('all');
+      setDifficultyFilter('all');
+      setPoolFilter('all');
+      setSearchTerm('');
+      setTabValue(0); // Set to "All Content" tab
       
-      // Initialize progress tracking with better details for individual items
+      // Reset page to 0 to show new content at the top
+      setPage(0);
+      
+      // Initialize progress tracking
       setGenerationProgress({
         total: categoryIdsParam.length,
         completed: 0,
@@ -738,10 +829,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         results: []
       });
 
-      // Reset page to 0 to show new content at the top
-      setPage(0);
-
-      // For better UX, we'll process one category at a time
+      // Process one category at a time
       const allGeneratedContent: Content[] = [];
       const results: Array<{
         categoryId: string;
@@ -767,32 +855,49 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         try {
           console.log(`Generating content for ${category.name} using model: ${selectedModel}`);
           
-          // Generate content for this category with selected model
+          // Use a simplified approach - generate one item at a time with the count parameter
+          // This avoids the multiple generation prompt issue
           const response = await contentAPI.generateMultipleContent(
             categoryId,
             undefined, // Let server use category's contentType
-            generationCount,
+            1, // Generate one item at a time to avoid batched responses
             'beginner',
-            selectedModel // Pass the selected model
+            selectedModel
           );
-
-          if (response.data?.content) {
-            // Show progress for individual items
-            for (let j = 0; j < response.data.content.length; j++) {
-              // Update item progress (slight delay to show animation)
-              await new Promise(resolve => setTimeout(resolve, 100));
-              setGenerationProgress(prev => ({
-                ...prev,
-                currentItemInCategory: j + 1
-              }));
+          
+          if (response.data?.content && response.data.content.length > 0) {
+            let processedContents: Content[] = [];
+            
+            // For the single item, split it into multiple items based on the requested count
+            const singleContent = response.data.content[0];
+            if (singleContent) {
+              // Split the content based on the requested count
+              const splitItems = splitBulletPointContent(singleContent, generationCount);
+              processedContents.push(...splitItems);
             }
             
-            allGeneratedContent.push(...response.data.content);
+            allGeneratedContent.push(...processedContents);
+            
+            // Update progress for this category
+            setGenerationProgress(prev => ({
+              ...prev,
+              currentItemInCategory: prev.totalItemsInCategory,
+              results: [
+                ...prev.results,
+                {
+                  categoryId,
+                  categoryName: category.name,
+                  success: true,
+                  count: processedContents.length
+                }
+              ]
+            }));
+            
             results.push({
               categoryId,
               categoryName: category.name,
               success: true,
-              count: response.data.content.length
+              count: processedContents.length
             });
           } else {
             results.push({
@@ -823,30 +928,29 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         currentItemInCategory: prev.totalItemsInCategory,
         results
       }));
- 
-      // Process and split bullet-pointed content
-      const processedContent: Content[] = [];
-      allGeneratedContent.forEach(item => {
-        const splitItems = splitBulletPointContent(item);
-        processedContent.push(...splitItems);
-      });
 
       // Update content state with new content
-      if (processedContent.length > 0) {
-        setContent(prevContent => [...processedContent, ...prevContent]);
+      if (allGeneratedContent.length > 0) {
+        // Prepend new content to the beginning of the list
+        setContent(prevContent => [...allGeneratedContent, ...prevContent]);
         
-        // Show a notification about where to find the content
+        // Highlight newly added content
         setSnackbar({
           open: true,
-          message: `${processedContent.length} new content items have been added to the top of the list`,
-          severity: 'info'
+          message: `${allGeneratedContent.length} new content items have been added!`,
+          severity: 'success'
         });
+        
+        // Force a refresh
+        setTimeout(() => {
+          handleRefresh();
+        }, 1000);
       }
 
       // Show summary
       const successful = results.filter(r => r.success).length;
       const failed = results.filter(r => !r.success).length;
-      const totalGenerated = processedContent.length;
+      const totalGenerated = allGeneratedContent.length;
 
       setSnackbar({
         open: true,
@@ -857,41 +961,25 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       // Clear the generation in progress flag
       localStorage.removeItem('windspire-generation-in-progress');
 
-      // Don't close dialog on error so user can see details
+      // Close dialog on success, or keep open on error to show details
       if (failed === 0) {
         handleCloseGenerationDialog();
       }
     } catch (err: any) {
       console.error('Error in batch generation:', err);
       
-      let errorMessage = 'Error during batch content generation';
-      if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
+      setError(err.message || 'Error during batch content generation');
       
       setSnackbar({
         open: true,
-        message: errorMessage,
+        message: err.message || 'Error during content generation',
         severity: 'error'
       });
 
-      // Clear the generation in progress flag
       localStorage.removeItem('windspire-generation-in-progress');
     } finally {
       setGeneratingContent(false);
     }
-  };
-
-  // Pagination handlers
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage);
-  };
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
   };
 
   // Snackbar close handler
@@ -931,25 +1019,40 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   };
 
   // Helper to split bullet-pointed content into separate items
-  const splitBulletPointContent = (content: Content): Content[] => {
+  const splitBulletPointContent = (content: Content, maxItems: number = 10): Content[] => {
     // If the content doesn't have title and body, return as is
     if (!content.body || typeof content.body !== 'string') {
       return [content];
     }
     
-    // Check if content appears to be a bullet-point list
+    // Extract bullet points from the content body
     const body = content.body;
     
     // Common bullet point patterns: "- ", "• ", "* ", "1. ", numbered items, etc.
     const bulletPointRegex = /(?:^|\n)(?:[-•*]|\d+\.)\s+(.*?)(?=(?:\n[-•*]|\n\d+\.|\n\n|$))/gs;
     const matches = [...body.matchAll(bulletPointRegex)];
     
-    // If we didn't find multiple bullet points, return original content
+    // If no bullet points found, try to split by paragraphs
     if (matches.length <= 1) {
+      const paragraphs = body.split(/\n\n+/);
+      if (paragraphs.length > 1) {
+        return paragraphs.slice(0, maxItems).map((paragraph, index) => {
+          // Create new content item for this paragraph
+          return {
+            ...content,
+            _id: undefined, // Remove ID so a new one will be created
+            title: `${content.title} - Part ${index + 1}`,
+            body: paragraph.trim(),
+            summary: paragraph.substring(0, Math.min(paragraph.length, 120)) + (paragraph.length > 120 ? '...' : '')
+          };
+        });
+      }
+      
+      // If still not splittable, return original content
       return [content];
     }
     
-    // Split into multiple content items, one for each bullet point
+    // Split into multiple content items, one for each bullet point, up to maxItems
     const contentItems: Content[] = [];
     
     // Common title pattern (if the title looks like a list title)
@@ -957,12 +1060,13 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     const titleMatch = content.title.match(titlePattern);
     const baseTitle = titleMatch ? titleMatch[1].trim() : content.title;
     
-    // Extract bullet points
-    matches.forEach((match, index) => {
+    // Extract bullet points up to maxItems
+    const limitedMatches = matches.slice(0, maxItems);
+    limitedMatches.forEach((match, index) => {
       if (!match[1]) return; // Skip if no content in group
       
       const bulletText = match[1].trim();
-      if (bulletText.length < 10) return; // Skip very short bullet points
+      if (bulletText.length < 5) return; // Skip very short bullet points
       
       // Create a title from the bullet point
       const bulletTitle = bulletText.length > 50 
@@ -1044,7 +1148,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   };
   
   // Handle duplicate rewrite
-  const handleRewriteDuplicate = async (contentId: string) => {
+  const handleRewriteDuplicate = async (contentId: string, rewriteModel: string = 'gpt-4o') => {
     try {
       const contentItem = content.find(item => item._id === contentId);
       if (!contentItem) return;
@@ -1055,10 +1159,10 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         severity: 'info'
       });
       
-      // Use o3 model for rewriting for best quality
+      // Use the provided model for rewriting
       const response = await contentAPI.rewriteContent(
         contentId,
-        'o3' // Specifically use o3 for rewriting to ensure high quality and uniqueness
+        rewriteModel
       );
       
       if (response.data?.content) {
@@ -1190,6 +1294,67 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     };
   }, [generatingContent]);
 
+  // Add a poolContent state to track content by pool
+  const [poolContent, setPoolContent] = useState<Record<string, Content[]>>({
+    regular: [],
+    accepted: [],
+    highly_liked: [],
+    disliked: [],
+    premium: []
+  });
+  const [loadingPools, setLoadingPools] = useState(false);
+  
+  // Fetch content by pool
+  const fetchPoolContent = async (pool: string = 'all') => {
+    try {
+      setLoadingPools(true);
+      const response = await contentAPI.getContentByPool(pool);
+      
+      if (response.data?.content) {
+        // If fetching all pools at once
+        if (pool === 'all') {
+          // Group content by pool
+          const grouped = response.data.content.reduce<Record<string, Content[]>>((acc, item) => {
+            const poolName = item.pool || 'regular';
+            if (!acc[poolName]) acc[poolName] = [];
+            acc[poolName].push(item);
+            return acc;
+          }, {
+            regular: [],
+            accepted: [],
+            highly_liked: [],
+            disliked: [],
+            premium: []
+          });
+          
+          setPoolContent(grouped);
+        } else {
+          // If fetching a specific pool, update just that property
+          setPoolContent(prev => ({
+            ...prev,
+            [pool]: response.data?.content || []
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching pool content:', err);
+      setSnackbar({
+        open: true,
+        message: 'Failed to load content pools',
+        severity: 'error'
+      });
+    } finally {
+      setLoadingPools(false);
+    }
+  };
+  
+  // Initial fetch of pool content 
+  useEffect(() => {
+    if (tabValue === 5) { // Only fetch when user selects Pools tab
+      fetchPoolContent('all');
+    }
+  }, [tabValue]);
+
   // Render loading state
   if (loading && content.length === 0) {
     return (
@@ -1272,6 +1437,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
           <Tab label="Pending Review" {...a11yProps(2)} />
           <Tab label="Drafts" {...a11yProps(3)} />
           <Tab label="Rejected" {...a11yProps(4)} />
+          <Tab label="Content Pools" {...a11yProps(5)} />
         </Tabs>
       </Paper>
 
@@ -1368,8 +1534,8 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         </Grid>
       </Box>
 
-      <Paper elevation={1}>
-        <TableContainer>
+      <Paper elevation={1} sx={{ position: 'relative' }}>
+        <TableContainer sx={{ maxHeight: '70vh' }}>
           <Table>
             <TableHead>
               <TableRow>
@@ -1551,8 +1717,11 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
           count={filteredContent.length}
           rowsPerPage={rowsPerPage}
           page={page}
-          onPageChange={handleChangePage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
+          onPageChange={(e, newPage) => setPage(newPage)}
+          onRowsPerPageChange={(e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          }}
         />
       </Paper>
 
@@ -2167,6 +2336,41 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
                     <Typography variant="body2" color="text.secondary">
                       You can delete duplicates, or rewrite them to make them unique. Rewriting preserves the same information but creates unique wording.
                     </Typography>
+                    
+                    {/* Add model selection for rewriting */}
+                    <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+                      <Typography variant="body2" mr={2}>
+                        Rewrite model:
+                      </Typography>
+                      <FormControl size="small" sx={{ width: 200 }}>
+                        <Select
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          size="small"
+                        >
+                          <ListSubheader>Flagship Models</ListSubheader>
+                          {availableModels.flagship.map(model => (
+                            <MenuItem key={model.id} value={model.id}>
+                              {model.name}
+                            </MenuItem>
+                          ))}
+                          
+                          <ListSubheader>Reasoning Models</ListSubheader>
+                          {availableModels.reasoning.map(model => (
+                            <MenuItem key={model.id} value={model.id}>
+                              {model.name}
+                            </MenuItem>
+                          ))}
+                          
+                          <ListSubheader>Cost-Efficient Models</ListSubheader>
+                          {availableModels.costEfficient.map(model => (
+                            <MenuItem key={model.id} value={model.id}>
+                              {model.name}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
                   </Paper>
                   
                   <TableContainer component={Paper}>
@@ -2226,7 +2430,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
                                 <IconButton
                                   size="small"
                                   color="warning"
-                                  onClick={() => handleRewriteDuplicate(item._id || '')}
+                                  onClick={() => handleRewriteDuplicate(item._id || '', selectedModel)}
                                 >
                                   <AutoFixHighIcon fontSize="small" />
                                 </IconButton>
@@ -2281,7 +2485,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
               if (selectedItems.length > 1) {
                 const itemsToRewrite = selectedItems.slice(1);
                 itemsToRewrite.forEach(item => {
-                  handleRewriteDuplicate(item._id || '');
+                  handleRewriteDuplicate(item._id || '', selectedModel);
                 });
               }
             }}
@@ -2315,6 +2519,198 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* Add a new TabPanel for Pools */}
+      <TabPanel value={tabValue} index={5}>
+        {loadingPools ? (
+          <Box display="flex" justifyContent="center" p={3}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <Box>
+            <Paper sx={{ p: 2, mb: 3 }}>
+              <Typography variant="h6" gutterBottom>
+                Content Pools Management
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Content is automatically sorted into different pools based on user interactions. 
+                Here you can manage content in each pool and move items between pools.
+              </Typography>
+              
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid item>
+                  <Chip 
+                    label={`Regular (${poolContent.regular.length})`}
+                    color="default"
+                    variant={poolFilter === 'regular' ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setPoolFilter(prev => prev === 'regular' ? 'all' : 'regular');
+                      if (tabValue !== 0) setTabValue(0);
+                    }}
+                  />
+                </Grid>
+                <Grid item>
+                  <Chip 
+                    label={`Accepted (${poolContent.accepted.length})`}
+                    color="primary"
+                    variant={poolFilter === 'accepted' ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setPoolFilter(prev => prev === 'accepted' ? 'all' : 'accepted');
+                      if (tabValue !== 0) setTabValue(0);
+                    }}
+                  />
+                </Grid>
+                <Grid item>
+                  <Chip 
+                    label={`Highly Liked (${poolContent.highly_liked.length})`}
+                    color="success"
+                    variant={poolFilter === 'highly_liked' ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setPoolFilter(prev => prev === 'highly_liked' ? 'all' : 'highly_liked');
+                      if (tabValue !== 0) setTabValue(0);
+                    }}
+                  />
+                </Grid>
+                <Grid item>
+                  <Chip 
+                    label={`Disliked (${poolContent.disliked.length})`}
+                    color="error"
+                    variant={poolFilter === 'disliked' ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setPoolFilter(prev => prev === 'disliked' ? 'all' : 'disliked');
+                      if (tabValue !== 0) setTabValue(0);
+                    }}
+                  />
+                </Grid>
+                <Grid item>
+                  <Chip 
+                    label={`Premium (${poolContent.premium.length})`}
+                    color="secondary"
+                    variant={poolFilter === 'premium' ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setPoolFilter(prev => prev === 'premium' ? 'all' : 'premium');
+                      if (tabValue !== 0) setTabValue(0);
+                    }}
+                  />
+                </Grid>
+              </Grid>
+              
+              <Button 
+                variant="outlined"
+                onClick={() => fetchPoolContent('all')}
+                startIcon={<RefreshIcon />}
+                size="small"
+              >
+                Refresh Pools
+              </Button>
+            </Paper>
+            
+            {/* Display content by pool */}
+            {Object.entries(poolContent).map(([pool, items]) => (
+              <Paper sx={{ mb: 3, overflow: 'hidden' }} key={pool}>
+                <Box 
+                  sx={{ 
+                    p: 2, 
+                    bgcolor: 
+                      pool === 'highly_liked' ? 'success.light' :
+                      pool === 'accepted' ? 'primary.light' :
+                      pool === 'disliked' ? 'error.light' :
+                      pool === 'premium' ? 'secondary.light' :
+                      'grey.100'
+                  }}
+                >
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    {pool === 'highly_liked' 
+                      ? 'Highly Liked Content' 
+                      : pool === 'accepted' 
+                        ? 'Accepted Content' 
+                        : pool === 'disliked' 
+                          ? 'Disliked Content' 
+                          : pool === 'premium' 
+                            ? 'Premium Content' 
+                            : 'Regular Content'}
+                    <Chip 
+                      label={items.length} 
+                      size="small" 
+                      sx={{ ml: 1 }} 
+                    />
+                  </Typography>
+                </Box>
+                
+                {items.length > 0 ? (
+                  <List dense>
+                    {items.slice(0, 5).map((item) => (
+                      <ListItem 
+                        key={item._id}
+                        secondaryAction={
+                          <Box>
+                            <Tooltip title="View">
+                              <IconButton 
+                                edge="end" 
+                                size="small"
+                                onClick={() => handleOpenContentDialog('view', item)}
+                              >
+                                <ViewIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Edit">
+                              <IconButton 
+                                edge="end" 
+                                size="small"
+                                onClick={() => handleOpenContentDialog('edit', item)}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        }
+                      >
+                        <ListItemText
+                          primary={item.title}
+                          secondary={
+                            <Box component="span">
+                              <Typography variant="caption" component="span" color="text.secondary">
+                                {getCategoryName(item.category)}
+                              </Typography>
+                              <Typography variant="caption" component="span" color="text.secondary" sx={{ ml: 1 }}>
+                                Views: {item.views || 0}
+                              </Typography>
+                              <Typography variant="caption" component="span" color="text.secondary" sx={{ ml: 1 }}>
+                                Likes: {item.ratings?.likes || 0} / Dislikes: {item.ratings?.dislikes || 0}
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                    
+                    {items.length > 5 && (
+                      <ListItem>
+                        <Button 
+                          fullWidth
+                          size="small"
+                          onClick={() => {
+                            setPoolFilter(pool);
+                            setTabValue(0); // Switch to main content tab with filter applied
+                          }}
+                        >
+                          View all {items.length} items
+                        </Button>
+                      </ListItem>
+                    )}
+                  </List>
+                ) : (
+                  <Box sx={{ p: 2, textAlign: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      No content in this pool
+                    </Typography>
+                  </Box>
+                )}
+              </Paper>
+            ))}
+          </Box>
+        )}
+      </TabPanel>
     </Box>
   );
 };

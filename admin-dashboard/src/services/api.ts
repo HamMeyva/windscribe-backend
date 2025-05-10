@@ -280,9 +280,9 @@ export const categoryAPI = {
 
 // Content APIs
 export const contentAPI = {
-  getAllContent: async (page = 1, limit = 10, status?: string, contentType?: string): Promise<ApiResponse<{ content: Content[] }>> => {
+  getAllContent: async (page = 1, limit = 10, status?: string, contentType?: string): Promise<ApiResponse<{ content: Content[], pagination?: { total: number, page: number, pages: number, limit: number } }>> => {
     try {
-      const response = await api.get<ApiResponse<{ content: Content[] }>>('/content', { 
+      const response = await api.get<ApiResponse<{ content: Content[], pagination: { total: number, page: number, pages: number, limit: number } }>>('/content', { 
         params: { page, limit, status, contentType } 
       });
       return response.data;
@@ -313,16 +313,58 @@ export const contentAPI = {
   
   createContent: async (contentData: Partial<Content>): Promise<ApiResponse<{ content: Content }>> => {
     try {
-      // Ensure contentType is set if not provided
+      // Ensure required fields are set
       if (!contentData.contentType) {
         contentData.contentType = 'hack';
       }
       
-      const response = await api.post<ApiResponse<{ content: Content }>>('/content', contentData);
-      return response.data;
-    } catch (error) {
+      if (!contentData.status) {
+        contentData.status = 'draft';
+      }
+      
+      if (!contentData.difficulty) {
+        contentData.difficulty = 'beginner';
+      }
+      
+      if (!contentData.pool) {
+        contentData.pool = 'regular';
+      }
+      
+      // Add default values for stats
+      if (!contentData.stats) {
+        contentData.stats = {
+          views: 0,
+          likes: 0,
+          dislikes: 0,
+          shares: 0,
+          saves: 0
+        };
+      }
+      
+      console.log('Creating content with data:', JSON.stringify(contentData, null, 2));
+      
+      // Use the admin API endpoint for content creation
+      const response = await api.post<ApiResponse<{ content: Content }>>('/admin/content', contentData);
+      
+      // Check if response is successful
+      if (response.data && (response.data.success || response.data.status === 'success')) {
+        return response.data;
+      } else {
+        throw new Error(response.data?.message || 'Unknown error creating content');
+      }
+    } catch (error: any) {
       console.error('Error creating content:', error);
-      throw error;
+      if (error.response) {
+        console.error('Server response:', error.response.data);
+      }
+      
+      // Return a structured error response
+      return {
+        success: false,
+        status: 'error',
+        message: `Failed to create content: ${error.response?.data?.message || error.message || 'Unknown error'}`,
+        data: { content: {} as Content }
+      };
     }
   },
   
@@ -339,8 +381,8 @@ export const contentAPI = {
   deleteContent: async (contentId: string): Promise<ApiResponse<null>> => {
     try {
       console.log(`Attempting to delete content with ID: ${contentId}`);
-      // Use the correct API endpoint
-      const response = await api.delete<ApiResponse<null>>(`/content/${contentId}`);
+      // Use the admin API endpoint instead (this is why we're getting 404 errors)
+      const response = await api.delete<ApiResponse<null>>(`/admin/content/${contentId}`);
       
       // Check if the response was successful
       if (!response.data.success && response.data.status !== 'success') {
@@ -348,7 +390,7 @@ export const contentAPI = {
       }
       
       return response.data;
-    } catch (error) {
+    } catch (error: any) { // Add the 'any' type to fix the linter error
       console.error(`Error deleting content ${contentId}:`, error);
       
       // Add better error details in the message
