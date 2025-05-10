@@ -321,7 +321,8 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         
       } catch (err) {
         console.error('Error fetching initial data:', err);
-        setError('Failed to load data. Please check your network connection and API availability.');
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        setError(`Failed to load data. ${errorMessage}`);
       } finally {
         setLoading(false);
       }
@@ -377,7 +378,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   };
 
   // Handle status filter change
-  const handleStatusFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+  const handleStatusFilterChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value as string;
     setStatusFilter(value);
     setPage(0); // Reset to first page
@@ -385,7 +386,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   };
 
   // Handle category filter change
-  const handleCategoryFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+  const handleCategoryFilterChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value as string;
     setCategoryFilter(value);
     setPage(0); // Reset to first page
@@ -393,7 +394,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   };
 
   // Handle content type filter change
-  const handleContentTypeFilterChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+  const handleContentTypeFilterChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value as string;
     setContentTypeFilter(value);
     setPage(0); // Reset to first page
@@ -427,19 +428,51 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
 
   // Get filtered content - now applies only to items on current page
   const getFilteredContent = () => {
-    // Since we're now filtering server-side via API calls, this function
-    // only needs to apply local filtering for things not handled by the API
-    return content.filter((item) => {
-      // Filter by search term locally (server doesn't support this yet)
-      if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) {
-        return false;
-      }
-      
-      return true;
-    });
+    // API artık server-side filtreleme yapıyor, client-side filtrelemeye gerek yok
+    return content;
   };
 
   const filteredContent = getFilteredContent();
+
+  // Unified function to fetch content with pagination
+  const fetchContentWithPagination = (pageNum: number, rowsPerPageNum: number) => {
+    setLoading(true);
+    
+    // Call API with all current filters
+    contentAPI.getAllContent(
+      pageNum + 1, // API uses 1-indexed pages
+      rowsPerPageNum, 
+      statusFilter !== 'all' ? statusFilter : undefined, 
+      contentTypeFilter !== 'all' ? contentTypeFilter : undefined,
+      difficultyFilter !== 'all' ? difficultyFilter : undefined,
+      poolFilter !== 'all' ? poolFilter : undefined,
+      searchTerm || undefined,
+      categoryFilter !== 'all' ? categoryFilter : undefined
+    )
+    .then(response => {
+      if (response?.data?.content) {
+        setContent(response.data.content);
+        
+        // Set pagination values from API response
+        if (response.data.pagination) {
+          console.log('Pagination data received:', response.data.pagination);
+          setTotalCount(response.data.pagination.total || 0);
+          setTotalPages(response.data.pagination.pages || 1);
+        } else {
+          console.log('No pagination data received from API');
+          const estimatedTotal = Math.max(100, response.data.content.length * 10);
+          setTotalCount(estimatedTotal);
+          setTotalPages(Math.ceil(estimatedTotal / rowsPerPageNum));
+        }
+      }
+      setLoading(false);
+    })
+    .catch(error => {
+      console.error('Error fetching content:', error);
+      setError(error as Error);
+      setLoading(false);
+    });
+  };
 
   // Content management functions
   const handleRefresh = async () => {
@@ -449,69 +482,42 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       
       // Debug API call parameters
       console.log('=== API CALL PARAMETERS ===');
+      console.log('Page:', page + 1); // API uses 1-indexed pages
+      console.log('Rows per page:', rowsPerPage);
+      console.log('Status filter:', statusFilter);
       console.log('Category filter:', categoryFilter);
+      console.log('Content Type filter:', contentTypeFilter);
+      console.log('Difficulty filter:', difficultyFilter);
+      console.log('Pool filter:', poolFilter);
+      console.log('Search term:', searchTerm);
       
-      // Make API request with pagination parameters and all filters
-      const response = await contentAPI.getAllContent(
-        page + 1, // API uses 1-indexed pages
-        rowsPerPage, 
-        statusFilter !== 'all' ? statusFilter : undefined, 
-        contentTypeFilter !== 'all' ? contentTypeFilter : undefined,
-        difficultyFilter !== 'all' ? difficultyFilter : undefined,
-        poolFilter !== 'all' ? poolFilter : undefined,
-        searchTerm || undefined,
-        categoryFilter !== 'all' ? categoryFilter : undefined // Add category filter parameter
-      );
-      
-      if (response?.data?.content) {
-        setContent(response.data.content);
-        
-        // Set pagination values from API response
-        if (response.data.pagination) {
-          setTotalCount(response.data.pagination.total || 0);
-          setTotalPages(response.data.pagination.pages || 1);
-        } else {
-          // If no pagination info, estimate based on content length
-          setTotalCount(response.data.content.length);
-          setTotalPages(1);
-        }
-      } else {
-        // Handle empty response
-        setContent([]);
-        setTotalCount(0);
-        setTotalPages(1);
-      }
-    } catch (error: any) {
+      // Use the unified function
+      fetchContentWithPagination(page, rowsPerPage);
+    } catch (error) {
       console.error('Error refreshing content:', error);
-      setError(`Failed to refresh content: ${error?.message || 'Unknown error'}`);
-      setSnackbar({
-        open: true,
-        message: `Failed to refresh content: ${error?.message || 'Please try again'}`,
-        severity: 'error'
-      });
-    } finally {
+      setError(error as Error);
       setLoading(false);
     }
   };
 
   // Handle page change
   const handleChangePage = (event: unknown, newPage: number) => {
+    console.log(`Changing to page ${newPage}`); 
     setPage(newPage);
-    // Call API with updated page
-    setTimeout(() => {
-      handleRefresh();
-    }, 0);
+    
+    // Call API with updated page immediately
+    fetchContentWithPagination(newPage, rowsPerPage);
   };
 
   // Handle rows per page change
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newRowsPerPage = parseInt(event.target.value, 10);
+    console.log(`Changing rows per page to ${newRowsPerPage}`);
     setRowsPerPage(newRowsPerPage);
-    setPage(0);
-    // Call API with new limit
-    setTimeout(() => {
-      handleRefresh();
-    }, 0);
+    setPage(0); // Reset to first page when changing rows per page
+    
+    // Call API with updated limit immediately
+    fetchContentWithPagination(0, newRowsPerPage);
   };
 
   // Dialog handlers
@@ -1434,81 +1440,47 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
   }
 
   return (
-    <Box>
+    <Box p={3}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" fontWeight="bold">
+        <Typography variant="h4" component="h1">
           Content Management
         </Typography>
-        <Box>
-          <Button 
-            variant="outlined" 
-            startIcon={<RefreshIcon />} 
-            onClick={handleRefresh}
-            sx={{ mr: 1 }}
-          >
-            Refresh
-          </Button>
-          <Button 
-            variant="outlined" 
-            color="warning" 
-            startIcon={<FilterIcon />} 
-            onClick={handleOpenDuplicateDialog}
-            sx={{ mr: 1 }}
-          >
-            Manage Duplicates
-          </Button>
-          <Button 
-            variant="outlined" 
-            color="error" 
-            startIcon={<DeleteIcon />} 
-            onClick={handleDeleteSelectedContent}
-            disabled={selectedContentIds.length === 0}
-            sx={{ mr: 1 }}
-          >
-            Delete Selected ({selectedContentIds.length})
-          </Button>
-          <Button 
-            variant="outlined" 
-            color="secondary" 
-            startIcon={<GenerateIcon />} 
-            onClick={handleOpenGenerationDialog}
-            sx={{ mr: 1 }}
-          >
-            Generate
-          </Button>
-          <Button 
+        <Box display="flex" gap={1}>
+          <Button
             variant="contained" 
+            color="primary"
             startIcon={<AddIcon />}
             onClick={() => handleOpenContentDialog('add')}
           >
             Add Content
           </Button>
+          <Button
+            variant="outlined"
+            color="primary"
+            startIcon={<GenerateIcon />}
+            onClick={handleOpenGenerationDialog}
+          >
+            Generate Content
+          </Button>
+          <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteIcon />}
+            onClick={handleDeleteSelectedContent}
+            disabled={selectedContentIds.length === 0}
+          >
+            Delete Selected
+          </Button>
+          <Button
+            variant="outlined"
+            color="secondary"
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+          >
+            Refresh
+          </Button>
         </Box>
       </Box>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Paper sx={{ mb: 3 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-        >
-          <Tab label="All Content" {...a11yProps(0)} />
-          <Tab label="Published" {...a11yProps(1)} />
-          <Tab label="Pending Review" {...a11yProps(2)} />
-          <Tab label="Drafts" {...a11yProps(3)} />
-          <Tab label="Rejected" {...a11yProps(4)} />
-          <Tab label="Content Pools" {...a11yProps(5)} />
-        </Tabs>
-      </Paper>
 
       <Box mb={3}>
         <Grid container spacing={2}>
@@ -1524,6 +1496,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
               }}
             />
           </Grid>
+          
           <Grid item xs={12} md={9}>
             <Box display="flex" gap={2}>
               <FormControl variant="outlined" fullWidth>
@@ -1583,7 +1556,6 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
                   <MenuItem value="advanced">Advanced</MenuItem>
                 </Select>
               </FormControl>
-              
               <FormControl variant="outlined" fullWidth>
                 <InputLabel>Pool</InputLabel>
                 <Select
@@ -1602,9 +1574,12 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
 
               {/* Add Search Button */}
               <Button 
-                variant="contained" 
+                variant="contained"
                 color="primary"
-                onClick={handleSearch}
+                onClick={() => {
+                  setPage(0); // Reset to first page when searching
+                  fetchContentWithPagination(0, rowsPerPage);
+                }}
                 startIcon={<SearchIcon />}
                 sx={{ ml: 2, height: 56 }}
               >
@@ -1646,141 +1621,140 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredContent
-                .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                .map((contentItem) => (
-                  <TableRow key={contentItem._id}>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        checked={selectedContentIds.includes(contentItem._id || '')}
-                        onChange={() => handleToggleContentSelection(contentItem._id || '')}
-                        color="primary"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography 
-                        variant="body1" 
-                        fontWeight="medium"
-                        sx={{ 
-                          cursor: 'pointer',
-                          '&:hover': { textDecoration: 'underline' }
-                        }}
-                        onClick={() => handleOpenContentDialog('view', contentItem)}
-                      >
-                        {contentItem.title}
-                        {isDuplicate(contentItem) && (
-                          <Chip
-                            label="Duplicate"
-                            size="small"
-                            color="warning"
-                            sx={{ ml: 1 }}
-                          />
-                        )}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {contentItem.summary.length > 60
-                          ? `${contentItem.summary.substring(0, 60)}...` 
-                          : contentItem.summary}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        ID: {contentItem._id ? contentItem._id.substring(0, 8) + '...' : 'N/A'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>{getCategoryName(contentItem.category)}</TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={contentItem.contentType || 'Hack'} 
-                        color="primary"
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={contentItem.pool || 'Regular'} 
-                        color={
-                          contentItem.pool === 'highly_liked' 
-                            ? 'success' 
-                            : contentItem.pool === 'accepted' 
-                              ? 'primary' 
-                              : contentItem.pool === 'disliked'
-                                ? 'error'
-                                : contentItem.pool === 'premium'
-                                  ? 'secondary'
-                                  : 'default'
-                        }
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={contentItem.difficulty.charAt(0).toUpperCase() + contentItem.difficulty.slice(1)} 
-                        color={
-                          contentItem.difficulty === 'beginner' 
-                            ? 'success' 
-                            : contentItem.difficulty === 'intermediate' 
-                              ? 'warning' 
-                              : 'error'
-                        }
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>{renderStatusChip(contentItem.status)}</TableCell>
-                    <TableCell>{contentItem.views}</TableCell>
-                    <TableCell>
-                      {contentItem.ratings ? `${contentItem.ratings.likes} / ${contentItem.ratings.dislikes}` : 'N/A'}
-                    </TableCell>
-                    <TableCell align="right">
-                      {/* Quick moderation buttons for pending content */}
-                      {contentItem.status === 'pending' && (
-                        <>
-                          <Tooltip title="Quick Approve">
-                            <IconButton
-                              onClick={() => handleQuickModeration(contentItem._id, 'approve')}
-                              color="success"
-                              size="small"
-                              sx={{ mr: 0.5 }}
-                            >
-                              <ThumbUpIcon />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Quick Reject">
-                            <IconButton
-                              onClick={() => handleQuickModeration(contentItem._id, 'reject')}
-                              color="error"
-                              size="small"
-                              sx={{ mr: 0.5 }}
-                            >
-                              <ThumbDownIcon />
-                            </IconButton>
-                          </Tooltip>
-                        </>
+              {/* Not slicing anymore since the API already returns paginated content */}
+              {filteredContent.map((contentItem) => (
+                <TableRow key={contentItem._id}>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={selectedContentIds.includes(contentItem._id || '')}
+                      onChange={() => handleToggleContentSelection(contentItem._id || '')}
+                      color="primary"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography 
+                      variant="body1" 
+                      fontWeight="medium"
+                      sx={{ 
+                        cursor: 'pointer',
+                        '&:hover': { textDecoration: 'underline' }
+                      }}
+                      onClick={() => handleOpenContentDialog('view', contentItem)}
+                    >
+                      {contentItem.title}
+                      {isDuplicate(contentItem) && (
+                        <Chip
+                          label="Duplicate"
+                          size="small"
+                          color="warning"
+                          sx={{ ml: 1 }}
+                        />
                       )}
-                      <Tooltip title="View">
-                        <IconButton 
-                          onClick={() => handleOpenContentDialog('view', contentItem)}
-                          color="default"
-                        >
-                          <ViewIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Edit">
-                        <IconButton 
-                          onClick={() => handleOpenContentDialog('edit', contentItem)}
-                          color="primary"
-                        >
-                          <EditIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="More Actions">
-                        <IconButton
-                          onClick={(e) => handleOpenMenu(e, contentItem._id)}
-                        >
-                          <MoreIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {contentItem.summary.length > 60
+                        ? `${contentItem.summary.substring(0, 60)}...` 
+                        : contentItem.summary}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      ID: {contentItem._id ? contentItem._id.substring(0, 8) + '...' : 'N/A'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{getCategoryName(contentItem.category)}</TableCell>
+                  <TableCell>
+                    <Chip 
+                      label={contentItem.contentType || 'Hack'} 
+                      color="primary"
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip 
+                      label={contentItem.pool || 'Regular'} 
+                      color={
+                        contentItem.pool === 'highly_liked' 
+                          ? 'success' 
+                          : contentItem.pool === 'accepted' 
+                            ? 'primary' 
+                            : contentItem.pool === 'disliked'
+                              ? 'error'
+                              : contentItem.pool === 'premium'
+                                ? 'secondary'
+                                : 'default'
+                      }
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip 
+                      label={contentItem.difficulty.charAt(0).toUpperCase() + contentItem.difficulty.slice(1)} 
+                      color={
+                        contentItem.difficulty === 'beginner' 
+                          ? 'success' 
+                          : contentItem.difficulty === 'intermediate' 
+                            ? 'warning' 
+                            : 'error'
+                      }
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>{renderStatusChip(contentItem.status)}</TableCell>
+                  <TableCell>{contentItem.views}</TableCell>
+                  <TableCell>
+                    {contentItem.ratings ? `${contentItem.ratings.likes} / ${contentItem.ratings.dislikes}` : 'N/A'}
+                  </TableCell>
+                  <TableCell align="right">
+                    {/* Quick moderation buttons for pending content */}
+                    {contentItem.status === 'pending' && (
+                      <>
+                        <Tooltip title="Quick Approve">
+                          <IconButton
+                            onClick={() => handleQuickModeration(contentItem._id, 'approve')}
+                            color="success"
+                            size="small"
+                            sx={{ mr: 0.5 }}
+                          >
+                            <ThumbUpIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Quick Reject">
+                          <IconButton
+                            onClick={() => handleQuickModeration(contentItem._id, 'reject')}
+                            color="error"
+                            size="small"
+                            sx={{ mr: 0.5 }}
+                          >
+                            <ThumbDownIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                    <Tooltip title="View">
+                      <IconButton 
+                        onClick={() => handleOpenContentDialog('view', contentItem)}
+                        color="default"
+                      >
+                        <ViewIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton 
+                        onClick={() => handleOpenContentDialog('edit', contentItem)}
+                        color="primary"
+                      >
+                        <EditIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="More Actions">
+                      <IconButton
+                        onClick={(e) => handleOpenMenu(e, contentItem._id)}
+                      >
+                        <MoreIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
               {filteredContent.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} align="center">
@@ -1793,16 +1767,18 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         </TableContainer>
         
         <TablePagination
-          rowsPerPageOptions={[5, 10, 25, 50]}
           component="div"
-          count={filteredContent.length}
-          rowsPerPage={rowsPerPage}
+          count={totalCount > 0 ? totalCount : 100} // Minimum 100 göster, böylece ileri butonu aktif olur
           page={page}
-          onPageChange={(e, newPage) => setPage(newPage)}
-          onRowsPerPageChange={(e) => {
-            setRowsPerPage(parseInt(e.target.value, 10));
-            setPage(0);
-          }}
+          onPageChange={(_, newPage) => handleChangePage(_, newPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={handleChangeRowsPerPage}
+          rowsPerPageOptions={[10, 25, 50, 100]}
+          labelDisplayedRows={({ from, to, count }) => 
+            `${from}-${to} of ${count !== -1 ? count : 'more than ' + to}`
+          }
+          nextIconButtonProps={{ disabled: false }} // Her zaman aktif
+          backIconButtonProps={{ disabled: page === 0 }} // Sadece ilk sayfada pasif
         />
       </Paper>
 
@@ -2608,187 +2584,81 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
             <CircularProgress />
           </Box>
         ) : (
-          <Box>
-            <Paper sx={{ p: 2, mb: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Content Pools Management
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                Content is automatically sorted into different pools based on user interactions. 
-                Here you can manage content in each pool and move items between pools.
-              </Typography>
-              
-              <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid item>
-                  <Chip 
-                    label={`Regular (${poolContent.regular.length})`}
-                    color="default"
-                    variant={poolFilter === 'regular' ? 'filled' : 'outlined'}
-                    onClick={() => {
-                      setPoolFilter(prev => prev === 'regular' ? 'all' : 'regular');
-                      if (tabValue !== 0) setTabValue(0);
-                    }}
-                  />
-                </Grid>
-                <Grid item>
-                  <Chip 
-                    label={`Accepted (${poolContent.accepted.length})`}
-                    color="primary"
-                    variant={poolFilter === 'accepted' ? 'filled' : 'outlined'}
-                    onClick={() => {
-                      setPoolFilter(prev => prev === 'accepted' ? 'all' : 'accepted');
-                      if (tabValue !== 0) setTabValue(0);
-                    }}
-                  />
-                </Grid>
-                <Grid item>
-                  <Chip 
-                    label={`Highly Liked (${poolContent.highly_liked.length})`}
-                    color="success"
-                    variant={poolFilter === 'highly_liked' ? 'filled' : 'outlined'}
-                    onClick={() => {
-                      setPoolFilter(prev => prev === 'highly_liked' ? 'all' : 'highly_liked');
-                      if (tabValue !== 0) setTabValue(0);
-                    }}
-                  />
-                </Grid>
-                <Grid item>
-                  <Chip 
-                    label={`Disliked (${poolContent.disliked.length})`}
-                    color="error"
-                    variant={poolFilter === 'disliked' ? 'filled' : 'outlined'}
-                    onClick={() => {
-                      setPoolFilter(prev => prev === 'disliked' ? 'all' : 'disliked');
-                      if (tabValue !== 0) setTabValue(0);
-                    }}
-                  />
-                </Grid>
-                <Grid item>
-                  <Chip 
-                    label={`Premium (${poolContent.premium.length})`}
-                    color="secondary"
-                    variant={poolFilter === 'premium' ? 'filled' : 'outlined'}
-                    onClick={() => {
-                      setPoolFilter(prev => prev === 'premium' ? 'all' : 'premium');
-                      if (tabValue !== 0) setTabValue(0);
-                    }}
-                  />
-                </Grid>
-              </Grid>
-              
-              <Button 
-                variant="outlined"
-                onClick={() => fetchPoolContent('all')}
-                startIcon={<RefreshIcon />}
-                size="small"
-              >
-                Refresh Pools
-              </Button>
-            </Paper>
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h5" gutterBottom>
+              Content Pools
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              Content is automatically sorted into different pools based on user interactions. 
+              Here you can manage content in each pool and move items between pools.
+            </Typography>
             
-            {/* Display content by pool */}
-            {Object.entries(poolContent).map(([pool, items]) => (
-              <Paper sx={{ mb: 3, overflow: 'hidden' }} key={pool}>
-                <Box 
-                  sx={{ 
-                    p: 2, 
-                    bgcolor: 
-                      pool === 'highly_liked' ? 'success.light' :
-                      pool === 'accepted' ? 'primary.light' :
-                      pool === 'disliked' ? 'error.light' :
-                      pool === 'premium' ? 'secondary.light' :
-                      'grey.100'
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid item>
+                <Chip 
+                  label={`Regular (${poolContent.regular.length})`}
+                  color="default"
+                  variant={poolFilter === 'regular' ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setPoolFilter(prev => prev === 'regular' ? 'all' : 'regular');
+                    handleSearch();
                   }}
-                >
-                  <Typography variant="subtitle1" fontWeight="bold">
-                    {pool === 'highly_liked' 
-                      ? 'Highly Liked Content' 
-                      : pool === 'accepted' 
-                        ? 'Accepted Content' 
-                        : pool === 'disliked' 
-                          ? 'Disliked Content' 
-                          : pool === 'premium' 
-                            ? 'Premium Content' 
-                            : 'Regular Content'}
-                    <Chip 
-                      label={items.length} 
-                      size="small" 
-                      sx={{ ml: 1 }} 
-                    />
-                  </Typography>
-                </Box>
-                
-                {items.length > 0 ? (
-                  <List dense>
-                    {items.slice(0, 5).map((item) => (
-                      <ListItem 
-                        key={item._id}
-                        secondaryAction={
-                          <Box>
-                            <Tooltip title="View">
-                              <IconButton 
-                                edge="end" 
-                                size="small"
-                                onClick={() => handleOpenContentDialog('view', item)}
-                              >
-                                <ViewIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Edit">
-                              <IconButton 
-                                edge="end" 
-                                size="small"
-                                onClick={() => handleOpenContentDialog('edit', item)}
-                              >
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </Box>
-                        }
-                      >
-                        <ListItemText
-                          primary={item.title}
-                          secondary={
-                            <Box component="span">
-                              <Typography variant="caption" component="span" color="text.secondary">
-                                {getCategoryName(item.category)}
-                              </Typography>
-                              <Typography variant="caption" component="span" color="text.secondary" sx={{ ml: 1 }}>
-                                Views: {item.views || 0}
-                              </Typography>
-                              <Typography variant="caption" component="span" color="text.secondary" sx={{ ml: 1 }}>
-                                Likes: {item.ratings?.likes || 0} / Dislikes: {item.ratings?.dislikes || 0}
-                              </Typography>
-                            </Box>
-                          }
-                        />
-                      </ListItem>
-                    ))}
-                    
-                    {items.length > 5 && (
-                      <ListItem>
-                        <Button 
-                          fullWidth
-                          size="small"
-                          onClick={() => {
-                            setPoolFilter(pool);
-                            setTabValue(0); // Switch to main content tab with filter applied
-                          }}
-                        >
-                          View all {items.length} items
-                        </Button>
-                      </ListItem>
-                    )}
-                  </List>
-                ) : (
-                  <Box sx={{ p: 2, textAlign: 'center' }}>
-                    <Typography variant="body2" color="text.secondary">
-                      No content in this pool
-                    </Typography>
-                  </Box>
-                )}
-              </Paper>
-            ))}
+                />
+              </Grid>
+              <Grid item>
+                <Chip 
+                  label={`Accepted (${poolContent.accepted.length})`}
+                  color="primary"
+                  variant={poolFilter === 'accepted' ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setPoolFilter(prev => prev === 'accepted' ? 'all' : 'accepted');
+                    handleSearch();
+                  }}
+                />
+              </Grid>
+              <Grid item>
+                <Chip 
+                  label={`Highly Liked (${poolContent.highly_liked.length})`}
+                  color="success"
+                  variant={poolFilter === 'highly_liked' ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setPoolFilter(prev => prev === 'highly_liked' ? 'all' : 'highly_liked');
+                    handleSearch();
+                  }}
+                />
+              </Grid>
+              <Grid item>
+                <Chip 
+                  label={`Disliked (${poolContent.disliked.length})`}
+                  color="error"
+                  variant={poolFilter === 'disliked' ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setPoolFilter(prev => prev === 'disliked' ? 'all' : 'disliked');
+                    handleSearch();
+                  }}
+                />
+              </Grid>
+              <Grid item>
+                <Chip 
+                  label={`Premium (${poolContent.premium.length})`}
+                  color="secondary"
+                  variant={poolFilter === 'premium' ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setPoolFilter(prev => prev === 'premium' ? 'all' : 'premium');
+                    handleSearch();
+                  }}
+                />
+              </Grid>
+            </Grid>
+            
+            <Button 
+              variant="outlined"
+              onClick={() => fetchPoolContent('all')}
+              startIcon={<RefreshIcon />}
+              size="small"
+            >
+              Refresh Pools
+            </Button>
           </Box>
         )}
       </TabPanel>

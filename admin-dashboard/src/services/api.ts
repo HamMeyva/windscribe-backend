@@ -371,9 +371,17 @@ export const categoryAPI = {
 export const contentAPI = {
   getAllContent: async (page = 1, limit = 10, status?: string, contentType?: string, difficulty?: string, pool?: string, search?: string, category?: string): Promise<ApiResponse<{ content: Content[], pagination?: { total: number, page: number, pages: number, limit: number } }>> => {
     try {
-      const response = await api.get<ApiResponse<{ content: Content[], pagination: { total: number, page: number, pages: number, limit: number } }>>('/content', { 
+      console.log('API Request Params:', { page, limit, status, contentType, difficulty, pool, search, category });
+      
+      const response = await api.get<ApiResponse<{ content: Content[], pagination?: { total: number, page: number, pages: number, limit: number } }>>('/content', { 
         params: { page, limit, status, contentType, difficulty, pool, search, category } 
       });
+      
+      // Log the response for debugging
+      console.log('API Response structure:', Object.keys(response.data));
+      console.log('API Response data:', Object.keys(response.data.data || {}));
+      console.log('API Response content length:', response.data?.data?.content?.length || 0);
+      
       return response.data;
     } catch (error) {
       return handleApiError(error, 'fetching content');
