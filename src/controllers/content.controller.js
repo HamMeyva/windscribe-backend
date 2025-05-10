@@ -44,6 +44,8 @@ exports.getAllContent = catchAsync(async (req, res, next) => {
     ];
   }
   
+  console.log('Content filter query:', JSON.stringify(filter, null, 2));
+  
   // Calculate pagination
   const skip = (parseInt(page) - 1) * parseInt(limit);
   
@@ -65,11 +67,11 @@ exports.getAllContent = catchAsync(async (req, res, next) => {
       total,
       page: parseInt(page),
       pages: Math.ceil(total / parseInt(limit)),
-      limit: parseInt(limit)
+      limit: parseInt(limit),
     },
     data: {
-      content
-    }
+      content,
+    },
   });
 });
 

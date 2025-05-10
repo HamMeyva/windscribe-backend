@@ -9,7 +9,7 @@ exports.getAllCategories = catchAsync(async (req, res, next) => {
   
   const categories = await Category.find(filter)
     .sort('priority name')
-    .select('name description icon color slug contentCount');
+    .select('name description icon color slug contentCount contentType');
   
   res.status(200).json({
     status: 'success',
@@ -47,6 +47,10 @@ exports.getCategory = catchAsync(async (req, res, next) => {
 // Create category (admin only)
 exports.createCategory = catchAsync(async (req, res, next) => {
   try {
+    // Debug contentType
+    console.log('DEBUG [BACKEND_CREATE] Received data:', req.body);
+    console.log('DEBUG [BACKEND_CREATE] contentType in request:', req.body.contentType);
+    
     // Prepare the category data with fallback for createdBy
     const createdBy = req.user?.id || process.env.ADMIN_USER_ID;
     
@@ -73,7 +77,15 @@ exports.createCategory = catchAsync(async (req, res, next) => {
       createdBy: createdBy
     };
     
+    console.log('DEBUG [BACKEND_CREATE] Final category data:', categoryData);
+    console.log('DEBUG [BACKEND_CREATE] contentType being saved:', categoryData.contentType);
+    
     const newCategory = await Category.create(categoryData);
+    
+    console.log('DEBUG [BACKEND_CREATE] Created category:', {
+      name: newCategory.name,
+      contentType: newCategory.contentType
+    });
     
     res.status(201).json({
       status: 'success',
@@ -113,6 +125,17 @@ exports.updateCategory = catchAsync(async (req, res, next) => {
     contentType: req.body.contentType
   };
   
+  // Debug contentType
+  console.log('DEBUG [BACKEND_UPDATE] Received data:', req.body);
+  console.log('DEBUG [BACKEND_UPDATE] contentType in request:', req.body.contentType);
+  
+  // Explicitly handle contentType update
+  if (req.body.contentType) {
+    // Force set it to ensure it gets updated
+    updateData.contentType = req.body.contentType;
+    console.log('DEBUG [BACKEND_UPDATE] Setting contentType to:', updateData.contentType);
+  }
+  
   // Remove undefined fields
   Object.keys(updateData).forEach(key => {
     if (updateData[key] === undefined) {
@@ -120,9 +143,12 @@ exports.updateCategory = catchAsync(async (req, res, next) => {
     }
   });
   
-  const updatedCategory = await Category.findByIdAndUpdate(
-    id,
-    updateData,
+  console.log('DEBUG [BACKEND_UPDATE] Final update data:', updateData);
+
+  // Use Model.findOneAndUpdate directly with $set to force updates
+  const updatedCategory = await Category.findOneAndUpdate(
+    { _id: id },
+    { $set: updateData },
     {
       new: true,
       runValidators: true,
@@ -132,6 +158,11 @@ exports.updateCategory = catchAsync(async (req, res, next) => {
   if (!updatedCategory) {
     return next(new AppError('Category not found', 404));
   }
+  
+  console.log('DEBUG [BACKEND_UPDATE] Updated category:', {
+    name: updatedCategory.name,
+    contentType: updatedCategory.contentType
+  });
   
   res.status(200).json({
     status: 'success',
@@ -248,11 +279,19 @@ exports.getCategoriesWithPoolStats = async (req, res, next) => {
     const promptService = require('../services/prompt.service');
     const Category = require('../models/category.model');
     
-    // Get all categories first
+    // Get all categories first with all fields including contentType
     const categories = await Category.find({});
     
     // Calculate pool statistics for each category
     const enrichedCategories = await promptService.calculateCategoryPools(categories);
+    
+    // Log some debug info for contentType values
+    console.log('DEBUG [BACKEND_GET_POOLS] Sample contentType values:', 
+      enrichedCategories.slice(0, 3).map(cat => ({
+        name: cat.name,
+        contentType: cat.contentType
+      }))
+    );
     
     res.status(200).json({
       status: 'success',

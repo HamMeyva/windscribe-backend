@@ -100,6 +100,30 @@ api.interceptors.response.use(
   }
 );
 
+// Apply interceptors
+api.interceptors.response.use(
+  (response) => {
+    // If the response has status but no success property, add it
+    if (response.data && response.data.status === 'success' && response.data.success === undefined) {
+      response.data.success = true;
+    }
+    return response;
+  },
+  (error) => {
+    // Log rate limiting issues
+    if (error.response?.status === 429) {
+      console.warn('Rate limit hit (HTTP 429). Consider reducing request frequency.');
+      
+      // If retry-after header is present, log it
+      const retryAfter = error.response.headers['retry-after'];
+      if (retryAfter) {
+        console.info(`Server advised to retry after ${retryAfter} seconds`);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Apply the same response interceptors to longRunningApi
 longRunningApi.interceptors.response.use(
   (response) => {
@@ -110,6 +134,16 @@ longRunningApi.interceptors.response.use(
     return response;
   },
   (error) => {
+    // Log rate limiting issues
+    if (error.response?.status === 429) {
+      console.warn('Rate limit hit (HTTP 429). Consider reducing request frequency.');
+      
+      // If retry-after header is present, log it
+      const retryAfter = error.response.headers['retry-after'];
+      if (retryAfter) {
+        console.info(`Server advised to retry after ${retryAfter} seconds`);
+      }
+    }
     return Promise.reject(error);
   }
 );
@@ -175,21 +209,56 @@ const handleApiError = (error: any, operation: string) => {
 // Authentication APIs
 export const authAPI = {
   login: async (credentials: LoginCredentials): Promise<ApiResponse<{ user: User }>> => {
-    const response = await api.post<ApiResponse<{ user: User }>>('/auth/login', credentials);
+    // Special handling for admin user to bypass rate limiting issues
+    const isAdminUser = credentials.email === 'admin@example.com';
     
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
+    // Add retry logic with exponential backoff especially for admin user
+    const maxRetries = isAdminUser ? 5 : 3;
+    let retries = 0;
+    let lastError: any;
+
+    while (retries <= maxRetries) {
+      try {
+        if (retries > 0) {
+          // Exponential backoff: 2 seconds, 4 seconds, 8 seconds...
+          const backoffTime = Math.pow(2, retries) * 1000;
+          console.log(`Retrying login (${retries}/${maxRetries}) after ${backoffTime}ms delay...`);
+          await new Promise(resolve => setTimeout(resolve, backoffTime));
+        }
+
+        const response = await api.post<ApiResponse<{ user: User }>>('/auth/login', credentials);
+        
+        if (response.data.token) {
+          localStorage.setItem('token', response.data.token);
+        }
+        
+        if (response.data.refreshToken) {
+          localStorage.setItem('refreshToken', response.data.refreshToken);
+        }
+        
+        if (response.data.data?.user) {
+          localStorage.setItem('user', JSON.stringify(response.data.data.user));
+        }
+        
+        return response.data;
+      } catch (error: any) {
+        lastError = error;
+        
+        // If it's a rate limit error (429), retry
+        if (error.response && error.response.status === 429) {
+          console.warn('Login rate limit hit (429), will retry with backoff...');
+          retries++;
+          continue;
+        }
+        
+        // For other errors, don't retry
+        break;
+      }
     }
     
-    if (response.data.refreshToken) {
-      localStorage.setItem('refreshToken', response.data.refreshToken);
-    }
-    
-    if (response.data.data?.user) {
-      localStorage.setItem('user', JSON.stringify(response.data.data.user));
-    }
-    
-    return response.data;
+    // If we've exhausted all retries or had a different error, handle it
+    console.error('Login failed after retries:', lastError);
+    throw lastError;
   },
   
   logout: async (): Promise<void> => {
@@ -253,12 +322,32 @@ export const categoryAPI = {
   },
   
   createCategory: async (categoryData: Partial<Category>): Promise<ApiResponse<{ category: Category }>> => {
-    const response = await api.post<ApiResponse<{ category: Category }>>('/categories', categoryData);
+    console.log('DEBUG [API_CREATE_REQUEST] Request payload:', JSON.stringify(categoryData, null, 2));
+    
+    // Ensure contentType is included in the request
+    const requestData = {
+      ...categoryData,
+      contentType: categoryData.contentType || 'hack'
+    };
+    
+    console.log('DEBUG [API_CREATE_FINAL] Final request payload:', JSON.stringify(requestData, null, 2));
+    const response = await api.post<ApiResponse<{ category: Category }>>('/categories', requestData);
+    console.log('DEBUG [API_CREATE_RESPONSE] Server response:', JSON.stringify(response.data, null, 2));
     return response.data;
   },
   
   updateCategory: async (categoryId: string, categoryData: Partial<Category>): Promise<ApiResponse<{ category: Category }>> => {
-    const response = await api.patch<ApiResponse<{ category: Category }>>(`/categories/${categoryId}`, categoryData);
+    console.log('DEBUG [API_UPDATE_REQUEST] Request payload:', JSON.stringify(categoryData, null, 2));
+    
+    // Ensure contentType is included in the request
+    const requestData = {
+      ...categoryData,
+      contentType: categoryData.contentType || 'hack'
+    };
+    
+    console.log('DEBUG [API_UPDATE_FINAL] Final request payload:', JSON.stringify(requestData, null, 2));
+    const response = await api.patch<ApiResponse<{ category: Category }>>(`/categories/${categoryId}`, requestData);
+    console.log('DEBUG [API_UPDATE_RESPONSE] Server response:', JSON.stringify(response.data, null, 2));
     return response.data;
   },
   
@@ -280,10 +369,10 @@ export const categoryAPI = {
 
 // Content APIs
 export const contentAPI = {
-  getAllContent: async (page = 1, limit = 10, status?: string, contentType?: string): Promise<ApiResponse<{ content: Content[], pagination?: { total: number, page: number, pages: number, limit: number } }>> => {
+  getAllContent: async (page = 1, limit = 10, status?: string, contentType?: string, difficulty?: string, pool?: string, search?: string, category?: string): Promise<ApiResponse<{ content: Content[], pagination?: { total: number, page: number, pages: number, limit: number } }>> => {
     try {
       const response = await api.get<ApiResponse<{ content: Content[], pagination: { total: number, page: number, pages: number, limit: number } }>>('/content', { 
-        params: { page, limit, status, contentType } 
+        params: { page, limit, status, contentType, difficulty, pool, search, category } 
       });
       return response.data;
     } catch (error) {
@@ -432,19 +521,46 @@ export const contentAPI = {
   },
   
   generateMultipleContent: async (categoryId: string, contentType?: string, count: number = 10, difficulty: string = 'beginner', model?: string): Promise<ApiResponse<{ content: Content[] }>> => {
-    try {
-      // Use longRunningApi for content generation which may take longer
-      const response = await longRunningApi.post<ApiResponse<{ content: Content[] }>>('/content/generate-multiple', {
-        categoryId,
-        contentType,
-        count,
-        difficulty,
-        model
-      });
-      return response.data;
-    } catch (error) {
-      return handleApiError(error, 'generating content');
+    // Add retry logic with exponential backoff
+    const maxRetries = 3;
+    let retries = 0;
+    let lastError: any;
+
+    while (retries <= maxRetries) {
+      try {
+        if (retries > 0) {
+          // Exponential backoff: 2 seconds, 4 seconds, 8 seconds...
+          const backoffTime = Math.pow(2, retries) * 1000;
+          console.log(`Retrying API call (${retries}/${maxRetries}) after ${backoffTime}ms delay due to rate limiting...`);
+          await new Promise(resolve => setTimeout(resolve, backoffTime));
+        }
+
+        // Use longRunningApi for content generation which may take longer
+        const response = await longRunningApi.post<ApiResponse<{ content: Content[] }>>('/content/generate-multiple', {
+          categoryId,
+          contentType,
+          count,
+          difficulty,
+          model
+        });
+        return response.data;
+      } catch (error: any) {
+        lastError = error;
+        
+        // If it's a rate limit error (429), retry
+        if (error.response && error.response.status === 429) {
+          console.warn('Rate limit hit (429), will retry with backoff...');
+          retries++;
+          continue;
+        }
+        
+        // For other errors, don't retry
+        break;
+      }
     }
+    
+    // If we've exhausted all retries or had a different error, handle it
+    return handleApiError(lastError, 'generating content');
   },
 
   getContentByPool: async (pool: string = 'regular', category?: string, contentType?: string): Promise<ApiResponse<{ content: Content[] }>> => {

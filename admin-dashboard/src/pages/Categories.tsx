@@ -99,6 +99,15 @@ const Categories = () => {
       setLoading(true);
       const response = await categoryAPI.getAllCategories();
       if (response.data?.categories) {
+        // Debug: Check returned categories and their contentType values
+        console.log('DEBUG [FETCH_CATEGORIES] Categories received:', 
+          response.data.categories.map(cat => ({ 
+            id: cat._id, 
+            name: cat.name, 
+            contentType: cat.contentType 
+          }))
+        );
+        
         setCategories(response.data.categories);
         setShowPoolStats(false);
       }
@@ -115,6 +124,15 @@ const Categories = () => {
       setLoading(true);
       const response = await categoryAPI.getCategoriesWithPoolStats();
       if (response.data?.categories) {
+        // Debug: Check returned categories and their contentType values
+        console.log('DEBUG [FETCH_CATEGORIES_WITH_POOLS] Categories received:', 
+          response.data.categories.map(cat => ({ 
+            id: cat._id, 
+            name: cat.name, 
+            contentType: cat.contentType 
+          }))
+        );
+        
         setCategories(response.data.categories);
         setShowPoolStats(true);
       }
@@ -132,6 +150,10 @@ const Categories = () => {
     
     if (mode === 'edit' && category) {
       setEditingCategory(category);
+      
+      // Log the content type from the existing category
+      debugContentType('EDIT_DIALOG_OPEN', category.contentType);
+      
       setFormData({
         name: category.name,
         description: category.description,
@@ -141,10 +163,16 @@ const Categories = () => {
         active: category.active,
         prompt: category.prompt || '',
         singlePrompt: category.singlePrompt || '',
-        promptType: 'single',
+        promptType: category.promptType || 'single',
         defaultNumToGenerate: category.defaultNumToGenerate || 5,
+        // Ensure contentType is explicitly set and prioritized
         contentType: category.contentType || 'hack'
       });
+      
+      // Verify the state right after setting
+      setTimeout(() => {
+        debugContentType('EDIT_DIALOG_AFTER_SET', formData.contentType);
+      }, 0);
     } else {
       // Reset form for adding
       setEditingCategory(null);
@@ -161,6 +189,8 @@ const Categories = () => {
         defaultNumToGenerate: 5,
         contentType: 'hack'
       });
+      
+      debugContentType('ADD_DIALOG_OPEN', 'hack');
     }
     
     setCategoryDialog(true);
@@ -173,11 +203,23 @@ const Categories = () => {
   const handleInputChange = (e: any) => {
     const { name, value } = e.target;
     if (name) {
+      // Log content type changes specifically
+      if (name === 'contentType') {
+        debugContentType('INPUT_CHANGE', value);
+      }
+      
       // Convert string 'true'/'false' to boolean for the 'active' field
       if (name === 'active') {
         setFormData({ ...formData, [name]: value === 'true' });
       } else {
         setFormData({ ...formData, [name]: value });
+        
+        // For contentType specifically, verify it was set correctly
+        if (name === 'contentType') {
+          setTimeout(() => {
+            debugContentType('AFTER_SET_IN_INPUT_CHANGE', formData.contentType);
+          }, 0);
+        }
       }
     }
   };
@@ -186,17 +228,68 @@ const Categories = () => {
     setFormData({ ...formData, color: color.hex });
   };
   
+  useEffect(() => {
+    // Keep the legacy 'prompt' field in sync with the single prompt
+    if (formData.singlePrompt !== undefined) {
+      debugContentType('BEFORE_PROMPT_SYNC', formData.contentType);
+      
+      setFormData(prev => {
+        const result = { 
+          ...prev,
+          prompt: prev.singlePrompt
+        };
+        
+        debugContentType('DURING_PROMPT_SYNC', result.contentType);
+        return result;
+      });
+      
+      // Check if contentType was affected
+      setTimeout(() => {
+        debugContentType('AFTER_PROMPT_SYNC', formData.contentType);
+      }, 0);
+    }
+  }, [formData.singlePrompt]);
+  
   const handleSubmit = async () => {
     try {
+      // Form validation and logging
+      debugContentType('SUBMIT_START', formData.contentType);
+      
+      // Ensure formData has all required fields explicitly set
+      const finalFormData = {
+        ...formData,
+        name: formData.name,
+        description: formData.description || '',
+        icon: formData.icon || '',
+        color: formData.color || '#3f51b5',
+        active: formData.active !== undefined ? formData.active : true,
+        priority: formData.priority !== undefined ? formData.priority : 0,
+        promptType: formData.promptType || 'single', 
+        defaultNumToGenerate: formData.defaultNumToGenerate || 5,
+        // Explicit string assignment for contentType to avoid any type issues
+        contentType: (formData.contentType as 'hack' | 'hack2' | 'tip' | 'tip2') || 'hack',
+        // Make sure prompt fields are consistent
+        prompt: formData.singlePrompt || '',
+        singlePrompt: formData.singlePrompt || ''
+      };
+      
+      debugContentType('SUBMIT_FINAL_DATA', finalFormData.contentType);
+      console.log('Final form data being sent:', finalFormData);
+      
+      let result;
       if (dialogMode === 'add') {
-        await categoryAPI.createCategory(formData);
+        result = await categoryAPI.createCategory(finalFormData);
+        debugContentType('API_RESPONSE', result?.data?.category?.contentType);
+        
         setSnackbar({
           open: true,
           message: 'Category created successfully',
           severity: 'success',
         });
       } else if (dialogMode === 'edit' && editingCategory?._id) {
-        await categoryAPI.updateCategory(editingCategory._id, formData);
+        result = await categoryAPI.updateCategory(editingCategory._id, finalFormData);
+        debugContentType('API_RESPONSE', result?.data?.category?.contentType);
+        
         setSnackbar({
           open: true,
           message: 'Category updated successfully',
@@ -444,10 +537,10 @@ const Categories = () => {
     }
   };
   
-  useEffect(() => {
-    // Keep the legacy 'prompt' field in sync with the single prompt
-    setFormData(prev => ({ ...prev, prompt: prev.singlePrompt }));
-  }, [formData.singlePrompt]);
+  // Debug function to track contentType
+  const debugContentType = (step: string, value: any) => {
+    console.log(`DEBUG [${step}] ContentType: ${value}`);
+  };
   
   if (loading && categories.length === 0) {
     return (
@@ -772,7 +865,19 @@ const Categories = () => {
                 <Select
                   name="contentType"
                   value={formData.contentType || 'hack'}
-                  onChange={handleInputChange}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    debugContentType('SELECT_CHANGE', newType);
+                    setFormData({
+                      ...formData,
+                      contentType: newType
+                    });
+                    
+                    // Verify the state right after setting
+                    setTimeout(() => {
+                      debugContentType('SELECT_AFTER_SET', formData.contentType);
+                    }, 0);
+                  }}
                   label="Content Type"
                 >
                   <MenuItem value="hack">

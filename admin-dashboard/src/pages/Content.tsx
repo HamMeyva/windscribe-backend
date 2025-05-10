@@ -65,6 +65,9 @@ import {
 import { contentAPI, categoryAPI } from '../services/api';
 import type { Content, Category } from '../types';
 
+// Helper function to add delay between API calls
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 interface ContentManagerProps {}
 
 interface TabPanelProps {
@@ -378,7 +381,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     const value = event.target.value as string;
     setStatusFilter(value);
     setPage(0); // Reset to first page
-    setTimeout(() => handleRefresh(), 0);
+    // Don't refresh immediately - wait for user to click Search button
   };
 
   // Handle category filter change
@@ -386,7 +389,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     const value = event.target.value as string;
     setCategoryFilter(value);
     setPage(0); // Reset to first page
-    setTimeout(() => handleRefresh(), 0);
+    // Don't refresh immediately - wait for user to click Search button
   };
 
   // Handle content type filter change
@@ -394,15 +397,32 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     const value = event.target.value as string;
     setContentTypeFilter(value);
     setPage(0); // Reset to first page
-    setTimeout(() => handleRefresh(), 0);
+    // Don't refresh immediately - wait for user to click Search button
   };
 
   const handleDifficultyFilterChange = (event: any) => {
     setDifficultyFilter(event.target.value);
+    // Remove immediate refresh - will be triggered by search button
   };
 
   const handlePoolFilterChange = (event: any) => {
     setPoolFilter(event.target.value);
+    // Remove immediate refresh - will be triggered by search button
+  };
+
+  // Add handle search function
+  const handleSearch = () => {
+    // Debug logging to help diagnose filter issues
+    console.log('=== FILTER DEBUG ===');
+    console.log('Status:', statusFilter);
+    console.log('Category:', categoryFilter);
+    console.log('Content Type:', contentTypeFilter);
+    console.log('Difficulty:', difficultyFilter);
+    console.log('Pool:', poolFilter);
+    console.log('Search Term:', searchTerm);
+    
+    setPage(0); // Reset to first page
+    handleRefresh();
   };
 
   // Get filtered content - now applies only to items on current page
@@ -412,16 +432,6 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     return content.filter((item) => {
       // Filter by search term locally (server doesn't support this yet)
       if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) {
-        return false;
-      }
-      
-      // Filter by difficulty locally
-      if (difficultyFilter !== 'all' && item.difficulty !== difficultyFilter) {
-        return false;
-      }
-      
-      // Filter by pool locally
-      if (poolFilter !== 'all' && item.pool !== poolFilter) {
         return false;
       }
       
@@ -437,12 +447,20 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       setLoading(true);
       setError(null);
       
-      // Make API request with pagination parameters
+      // Debug API call parameters
+      console.log('=== API CALL PARAMETERS ===');
+      console.log('Category filter:', categoryFilter);
+      
+      // Make API request with pagination parameters and all filters
       const response = await contentAPI.getAllContent(
         page + 1, // API uses 1-indexed pages
         rowsPerPage, 
         statusFilter !== 'all' ? statusFilter : undefined, 
-        contentTypeFilter !== 'all' ? contentTypeFilter : undefined
+        contentTypeFilter !== 'all' ? contentTypeFilter : undefined,
+        difficultyFilter !== 'all' ? difficultyFilter : undefined,
+        poolFilter !== 'all' ? poolFilter : undefined,
+        searchTerm || undefined,
+        categoryFilter !== 'all' ? categoryFilter : undefined // Add category filter parameter
       );
       
       if (response?.data?.content) {
@@ -777,6 +795,12 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       setGeneratingContent(true);
       setError(null);
       
+      // Debug logs
+      console.log("=== DEBUG: Starting content generation with workaround ===");
+      console.log("Generation count:", generationCount);
+      console.log("Multi-category mode:", multiCategoryMode);
+      console.log("Selected model:", selectedModel);
+      
       // Set the flag that generation is in progress
       localStorage.setItem('windspire-generation-in-progress', 'true');
       
@@ -807,6 +831,8 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         categoryIdsParam = [generationCategory];
       }
 
+      console.log("Categories to process:", categoryIdsParam);
+      
       // Clear existing filters to ensure new content is visible
       setStatusFilter('all');
       setCategoryFilter('all');
@@ -818,6 +844,9 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       
       // Reset page to 0 to show new content at the top
       setPage(0);
+      
+      // Calculate total number of items to generate across all categories
+      const totalItemsToGenerate = categoryIdsParam.length * generationCount;
       
       // Initialize progress tracking
       setGenerationProgress({
@@ -853,61 +882,86 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
         }));
 
         try {
-          console.log(`Generating content for ${category.name} using model: ${selectedModel}`);
+          console.log(`DEBUG: Generating content for ${category.name} using model: ${selectedModel}`);
+          console.log(`DEBUG: Requesting ${generationCount} items individually from the API`);
           
-          // Use a simplified approach - generate one item at a time with the count parameter
-          // This avoids the multiple generation prompt issue
-          const response = await contentAPI.generateMultipleContent(
-            categoryId,
-            undefined, // Let server use category's contentType
-            1, // Generate one item at a time to avoid batched responses
-            'beginner',
-            selectedModel
-          );
+          // Track generated content for this category
+          const categoryGeneratedContent: Content[] = [];
           
-          if (response.data?.content && response.data.content.length > 0) {
-            let processedContents: Content[] = [];
-            
-            // For the single item, split it into multiple items based on the requested count
-            const singleContent = response.data.content[0];
-            if (singleContent) {
-              // Split the content based on the requested count
-              const splitItems = splitBulletPointContent(singleContent, generationCount);
-              processedContents.push(...splitItems);
+          // Make multiple API calls, one for each item we want to generate
+          // This is a workaround since the backend seems to ignore the count parameter
+          for (let j = 0; j < generationCount; j++) {
+            try {
+              // Update item progress
+              setGenerationProgress(prev => ({
+                ...prev,
+                currentItemInCategory: j
+              }));
+              
+              console.log(`DEBUG: Generating item ${j + 1} of ${generationCount} for ${category.name}`);
+              
+              // Add a substantial delay between API calls to prevent rate limiting
+              if (j > 0) {
+                // Use a much longer delay to avoid hitting rate limits (2 seconds minimum)
+                const delayTime = Math.max(2000, 500 * generationCount);
+                console.log(`DEBUG: Adding ${delayTime}ms delay between requests to prevent rate limiting`);
+                await delay(delayTime);
+              }
+              
+              // Make API call to generate 1 item
+              const response = await contentAPI.generateMultipleContent(
+                categoryId,
+                undefined, // Let server use category's contentType
+                1, // Always request 1 item per call
+                'beginner',
+                selectedModel
+              );
+              
+              // If we got a valid response, add it to our collection
+              if (response?.data?.content && response.data.content.length > 0) {
+                console.log(`DEBUG: Successfully generated item ${j + 1}`, response.data.content[0].title);
+                categoryGeneratedContent.push(...response.data.content);
+                
+                // Update progress for this item
+                setGenerationProgress(prev => ({
+                  ...prev,
+                  currentItemInCategory: j + 1
+                }));
+              } else {
+                console.warn(`DEBUG: API returned success but no content for item ${j + 1}`);
+              }
+            } catch (itemError: any) {
+              console.error(`Error generating item ${j + 1} for ${category.name}:`, itemError);
+              // Continue with next item even if this one failed
             }
-            
-            allGeneratedContent.push(...processedContents);
-            
-            // Update progress for this category
-            setGenerationProgress(prev => ({
-              ...prev,
-              currentItemInCategory: prev.totalItemsInCategory,
-              results: [
-                ...prev.results,
-                {
-                  categoryId,
-                  categoryName: category.name,
-                  success: true,
-                  count: processedContents.length
-                }
-              ]
-            }));
-            
-            results.push({
-              categoryId,
-              categoryName: category.name,
-              success: true,
-              count: processedContents.length
-            });
-          } else {
-            results.push({
-              categoryId,
-              categoryName: category.name,
-              success: false,
-              count: 0,
-              error: 'No content was returned'
-            });
           }
+          
+          console.log(`DEBUG: Successfully generated ${categoryGeneratedContent.length} items for ${category.name}`);
+          
+          // Add all items from this category to the total generated content
+          allGeneratedContent.push(...categoryGeneratedContent);
+          
+          // Update progress for this category
+          setGenerationProgress(prev => ({
+            ...prev,
+            currentItemInCategory: generationCount,
+            results: [
+              ...prev.results,
+              {
+                categoryId,
+                categoryName: category.name,
+                success: categoryGeneratedContent.length > 0,
+                count: categoryGeneratedContent.length
+              }
+            ]
+          }));
+          
+          results.push({
+            categoryId,
+            categoryName: category.name,
+            success: categoryGeneratedContent.length > 0,
+            count: categoryGeneratedContent.length
+          });
         } catch (err: any) {
           console.error(`Error generating content for ${category.name}:`, err);
           results.push({
@@ -978,6 +1032,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
 
       localStorage.removeItem('windspire-generation-in-progress');
     } finally {
+      console.log("=== DEBUG: Generation process complete ===");
       setGeneratingContent(false);
     }
   };
@@ -1020,8 +1075,13 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
 
   // Helper to split bullet-pointed content into separate items
   const splitBulletPointContent = (content: Content, maxItems: number = 10): Content[] => {
+    console.log("=== DEBUG: Starting content splitting ===");
+    console.log("Content to split:", content);
+    console.log("Max items requested:", maxItems);
+    
     // If the content doesn't have title and body, return as is
     if (!content.body || typeof content.body !== 'string') {
+      console.log("DEBUG: Content body missing or not a string, returning as is");
       return [content];
     }
     
@@ -1031,10 +1091,14 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     // Common bullet point patterns: "- ", "• ", "* ", "1. ", numbered items, etc.
     const bulletPointRegex = /(?:^|\n)(?:[-•*]|\d+\.)\s+(.*?)(?=(?:\n[-•*]|\n\d+\.|\n\n|$))/gs;
     const matches = [...body.matchAll(bulletPointRegex)];
+    console.log("DEBUG: Bullet point matches found:", matches.length);
     
     // If no bullet points found, try to split by paragraphs
     if (matches.length <= 1) {
+      console.log("DEBUG: No bullet points found, trying to split by paragraphs");
       const paragraphs = body.split(/\n\n+/);
+      console.log("DEBUG: Paragraphs found:", paragraphs.length);
+      
       if (paragraphs.length > 1) {
         return paragraphs.slice(0, maxItems).map((paragraph, index) => {
           // Create new content item for this paragraph
@@ -1049,6 +1113,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       }
       
       // If still not splittable, return original content
+      console.log("DEBUG: Content not splittable, returning as is");
       return [content];
     }
     
@@ -1062,6 +1127,8 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
     
     // Extract bullet points up to maxItems
     const limitedMatches = matches.slice(0, maxItems);
+    console.log("DEBUG: Using limited matches:", limitedMatches.length);
+    
     limitedMatches.forEach((match, index) => {
       if (!match[1]) return; // Skip if no content in group
       
@@ -1089,6 +1156,8 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
       
       contentItems.push(newContent);
     });
+    
+    console.log("DEBUG: Final number of content items created:", contentItems.length);
     
     // If we successfully extracted bullet points, return them
     // Otherwise return the original content
@@ -1514,6 +1583,7 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
                   <MenuItem value="advanced">Advanced</MenuItem>
                 </Select>
               </FormControl>
+              
               <FormControl variant="outlined" fullWidth>
                 <InputLabel>Pool</InputLabel>
                 <Select
@@ -1529,6 +1599,17 @@ const ContentManager: React.FC<ContentManagerProps> = () => {
                   <MenuItem value="premium">Premium</MenuItem>
                 </Select>
               </FormControl>
+
+              {/* Add Search Button */}
+              <Button 
+                variant="contained" 
+                color="primary"
+                onClick={handleSearch}
+                startIcon={<SearchIcon />}
+                sx={{ ml: 2, height: 56 }}
+              >
+                Search
+              </Button>
             </Box>
           </Grid>
         </Grid>
