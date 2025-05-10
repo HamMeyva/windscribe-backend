@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
 
 // Load environment variables
 dotenv.config();
@@ -44,12 +46,39 @@ const userSchema = new mongoose.Schema({
 // Create User model
 const User = mongoose.model('User', userSchema);
 
+// Function to update .env file with admin ID
+const updateEnvFile = (adminId) => {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    
+    // Check if .env file exists
+    if (!fs.existsSync(envPath)) {
+      console.error('No .env file found. Please create a .env file with ADMIN_EMAIL and ADMIN_PASSWORD variables.');
+      return;
+    }
+
+    let envContent = fs.readFileSync(envPath, 'utf8');
+    
+    // Replace or add ADMIN_USER_ID
+    if (envContent.includes('ADMIN_USER_ID=')) {
+      envContent = envContent.replace(/ADMIN_USER_ID=.*/g, `ADMIN_USER_ID=${adminId}`);
+    } else {
+      envContent += `\nADMIN_USER_ID=${adminId}`;
+    }
+    
+    fs.writeFileSync(envPath, envContent);
+    console.log(`Updated .env file with ADMIN_USER_ID=${adminId}`);
+  } catch (error) {
+    console.error('Error updating .env file:', error);
+  }
+};
+
 // Create admin user
-async function createAdmin() {
+async function setupAdmin() {
   try {
     // Use admin credentials from environment variables
     const adminEmail = process.env.ADMIN_EMAIL || 'admin@windspire.com';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'password123';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
 
     console.log(`Setting up admin with email: ${adminEmail}`);
     
@@ -67,6 +96,9 @@ async function createAdmin() {
       
       console.log(`Admin user updated with password from environment variables`);
       console.log(`Admin ID: ${existingAdmin._id}`);
+      
+      // Update the .env file with the admin ID
+      updateEnvFile(existingAdmin._id);
     } else {
       // Create new admin
       const hashedPassword = await bcrypt.hash(adminPassword, 12);
@@ -94,13 +126,25 @@ async function createAdmin() {
       await admin.save();
       console.log(`New admin user created with credentials from environment variables`);
       console.log(`Admin ID: ${admin._id}`);
+      
+      // Update the .env file with the admin ID
+      updateEnvFile(admin._id);
     }
+    
+    console.log(`
+Admin Setup Complete!
+---------------------------
+Email: ${adminEmail}
+Password: ${adminPassword}
+---------------------------
+You can now use these credentials to login to the admin dashboard.
+    `);
     
     process.exit(0);
   } catch (error) {
-    console.error('Error creating admin user:', error);
+    console.error('Error setting up admin user:', error);
     process.exit(1);
   }
 }
 
-createAdmin(); 
+setupAdmin(); 

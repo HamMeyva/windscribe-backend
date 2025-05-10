@@ -8,7 +8,8 @@
     "dev": "nodemon src/index.js",
     "admin": "cd admin-dashboard && npm start",
     "dev:all": "concurrently \"npm run dev\" \"npm run admin\"",
-    "test": "jest"
+    "test": "jest",
+    "setup-admin": "node setup-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
